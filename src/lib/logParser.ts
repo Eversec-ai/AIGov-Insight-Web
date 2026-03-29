@@ -54,6 +54,7 @@ export function parseLogFile(content: string): ParsedLogEntry[] {
       ...entry,
       id: entry.logID || Math.random().toString(36).substring(7),
       timestamp: parseDate(entry.collectTime),
+      dataType: entry.dataType === 'UNKNOW' ? 'UNKNOWN' : (entry.dataType || 'UNKNOWN'),
       parsedQuery: entry.query ? decodeBase64(entry.query) : undefined,
       parsedAnswer: entry.answer ? decodeBase64(entry.answer) : undefined,
       parsedReqPayload: entry.reqPayload ? decodeBase64(entry.reqPayload) : undefined,
@@ -119,6 +120,8 @@ export function getDataTypeColor(dataType: string): string {
     FILE: '#eab308',
     EXEC: '#6366f1',
     OPENCLAW: '#06b6d4',
+    UNKNOWN: '#6b7280',
+    UNKNOW: '#6b7280',
   };
   return colors[dataType] || '#6b7280';
 }
@@ -135,6 +138,8 @@ export function getDataTypeIcon(dataType: string): string {
     FILE: '📄',
     EXEC: '⚡',
     OPENCLAW: '🦞',
+    UNKNOWN: '❓',
+    UNKNOW: '❓',
   };
   return icons[dataType] || '❓';
 }

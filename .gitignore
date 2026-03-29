@@ -59,7 +59,7 @@ log.txt
 
 # Build artifacts
 *.tar
-*.tar.gz
+# *.tar.gz
 
 # Temporary files
 tmp/

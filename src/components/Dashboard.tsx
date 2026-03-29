@@ -11,9 +11,11 @@ import { GlobalTimelineView } from '@/components/GlobalTimelineView';
 import { TreeView } from '@/components/TreeView';
 import { ProcessTreeView } from '@/components/ProcessTreeView';
 import { SessionTimelineView } from '@/components/SessionTimelineView';
-import { AIAssistantSidebar } from '@/components/AIAssistantSidebar';
+
 import { TimeRangeSlider } from '@/components/TimeRangeSlider';
 import { GlobalLoadingOverlay } from '@/components/GlobalLoadingOverlay';
+import { SecurityShield } from '@/components/SecurityShield';
+import { FloatingTab } from '@/components/FloatingTab';
 import { Activity, Clock, Server, Zap, RefreshCw, Sun, Moon, LogOut, Droplets, Expand, Shrink } from 'lucide-react';
 import { useTransparency } from '@/context/TransparencyContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -39,9 +41,6 @@ export default function Dashboard() {
   }, []);
   
 
-  
-  // AI 助手模态框状态
-  const [isAIModalOpen, setIsAIModalOpen] = useState(false);
   
   // Tab切换状态
   const [activeTab, setActiveTab] = useState('logs'); // logs, timeline, tree
@@ -77,16 +76,6 @@ export default function Dashboard() {
     end: new Date()
   });
   
-  // 打开 AI 助手模态框
-  const openAIModal = useCallback(() => {
-    setIsAIModalOpen(true);
-  }, []);
-  
-  // 关闭 AI 助手模态框
-  const closeAIModal = useCallback(() => {
-    setIsAIModalOpen(false);
-  }, []);
-  
   // 过滤条件状态
   const [filterConditions, setFilterConditions] = useState({
     types: { // 多选日志类型过滤，默认全部勾选
@@ -98,7 +87,8 @@ export default function Dashboard() {
       'AG-UI': true,
       'FILE': true,
       'EXEC': true,
-      'OPENCLAW': true
+      'OPENCLAW': true,
+      'UNKNOWN': true
     },
     keyword: '', // 搜索关键字
     fullTextSearch: false // 是否开启全文搜索
@@ -114,6 +104,7 @@ export default function Dashboard() {
     'FILE': boolean;
     'EXEC': boolean;
     'OPENCLAW': boolean;
+    'UNKNOWN': boolean;
     'OTHER': boolean;
     [key: string]: boolean; // 添加索引签名
   }>({
@@ -124,6 +115,7 @@ export default function Dashboard() {
     'FILE': true,
     'EXEC': true,
     'OPENCLAW': true,
+    'UNKNOWN': true,
     'OTHER': true
   });
   
@@ -139,7 +131,8 @@ export default function Dashboard() {
       'AG-UI': true,
       'FILE': true,
       'EXEC': true,
-      'OPENCLAW': true
+      'OPENCLAW': true,
+      'UNKNOWN': true
     },
     // 多选风险等级过滤，默认全部勾选
     riskLevels: {
@@ -178,7 +171,8 @@ export default function Dashboard() {
       'AG-UI': true,
       'FILE': true,
       'EXEC': true,
-      'OPENCLAW': true
+      'OPENCLAW': true,
+      'UNKNOWN': true
     }
   });
   
@@ -234,6 +228,7 @@ export default function Dashboard() {
       'FILE': true,
       'EXEC': true,
       'OPENCLAW': true,
+      'UNKNOWN': true,
       'OTHER': true
     });
     setTimelineTimeRange({ start: 0, end: 0 });
@@ -289,7 +284,8 @@ export default function Dashboard() {
           'AG-UI': true,
           FILE: true,
           EXEC: true,
-          OPENCLAW: true
+          OPENCLAW: true,
+          UNKNOWN: true
         },
         riskLevels: {
           HIGH: true,
@@ -310,7 +306,8 @@ export default function Dashboard() {
           'AG-UI': false,
           FILE: true,
           EXEC: true,
-          OPENCLAW: false
+          OPENCLAW: false,
+          UNKNOWN: false
         },
         riskLevels: {
           HIGH: type === 'HIGH',
@@ -331,7 +328,8 @@ export default function Dashboard() {
           'AG-UI': type === 'AG-UI',
           FILE: type === 'FILE',
           EXEC: type === 'EXEC',
-          OPENCLAW: type === 'OPENCLAW'
+          OPENCLAW: type === 'OPENCLAW',
+          UNKNOWN: type === 'UNKNOWN'
         },
         riskLevels: {
           HIGH: true,
@@ -612,133 +610,162 @@ export default function Dashboard() {
       />
 
       
-      {/* AI 助手侧边栏 */}
-      <AIAssistantSidebar
-        isOpen={isAIModalOpen}
-        onClose={closeAIModal}
-      />
-      
       {/* 顶部导航栏 */}
-      <header className={`sticky top-0 z-50 backdrop-blur-xl bg-[var(--background)]/50 border-b border-[var(--border-color)] transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1) ${isScrolled ? 'py-1' : 'py-3'}`}>
+      <header className={`sticky top-0 z-50 backdrop-blur-2xl border-b transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1) ${isScrolled ? 'py-1' : 'py-3'} ${
+        isDarkMode 
+          ? 'bg-gray-900/60 border-gray-700/50' 
+          : 'bg-white/70 border-gray-200/50'
+      }`}>
         <div className={`${isWideScreen ? 'w-full' : 'max-w-7xl mx-auto'} px-6 transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1) ${isScrolled ? 'py-1' : 'py-3'}`}>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1)" style={{ width: isScrolled ? 'auto' : 'auto' }}>
+            <div className={`flex items-center transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1) ${isScrolled ? 'gap-3' : 'gap-3'}`} style={{ width: isScrolled ? 'auto' : 'auto' }}>
               <div className={`transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1) ${isScrolled ? 'w-8 h-8' : 'w-10 h-10'}`}>
-                <div className={`w-full h-full rounded-xl bg-gradient-to-br from-[var(--accent-blue)] to-[var(--accent-blue-hover)] flex items-center justify-center`}>
-                  <Activity className={`transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1) ${isScrolled ? 'w-5 h-5' : 'w-6 h-6'} text-white`} />
-                </div>
+                <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
               </div>
-              <div className="transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1)" style={{ opacity: isScrolled ? 0.8 : 1, transform: isScrolled ? 'scale(0.9)' : 'scale(1)' }}>
+              <div className={`transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1) ${isScrolled ? '-ml-0.5' : ''}`} style={{ opacity: isScrolled ? 0.8 : 1, transform: isScrolled ? 'scale(0.9)' : 'scale(1)', transformOrigin: 'left center' }}>
                 <div className="flex items-center gap-2">
-                  <h1 className={`transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1) font-semibold text-[var(--foreground)] ${isScrolled ? 'text-lg' : 'text-xl'}`}>AISec-Insight 智能 AI 采集探针</h1>
+                  <h1 className={`transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1) font-extrabold ${isScrolled ? 'text-lg' : 'text-xl'}`}>
+                    <span className="relative inline-block">
+                      <span className="absolute inset-0 bg-gradient-to-r from-blue-500 via-purple-500 via-pink-500 to-blue-500 bg-[length:300%_100%] bg-clip-text text-transparent animate-gradient-flow-slow drop-shadow-[0_0_20px_rgba(139,92,246,0.4)]">
+                        AIGov-Insight
+                      </span>
+                      <span className="relative bg-gradient-to-r from-blue-400 via-indigo-400 via-purple-400 via-pink-400 to-cyan-400 bg-[length:300%_100%] bg-clip-text text-transparent animate-gradient-flow-slow">
+                        AIGov-Insight
+                      </span>
+                    </span>
+                    <span className={`${isDarkMode ? 'text-gray-200' : 'text-gray-700'} font-semibold ml-1`}>智能体安全治理平台</span>
+                  </h1>
                   <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-gradient-to-r from-[var(--accent-blue)]/20 to-[var(--accent-blue)]/10 text-[var(--accent-blue)] border border-[var(--accent-blue)]/30 backdrop-blur-sm transition-all duration-300 ${isScrolled ? 'scale-90' : 'scale-100'}`}>
-                    v0.2.20
+                    v0.3.0
                   </span>
                 </div>
-                <p className={`transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1) text-[var(--text-secondary)] ${isScrolled ? 'text-[10px]' : 'text-xs'}`}>基于 eBPF 大模型和智能体可观测探针</p>
+                <p className={`transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1) text-[var(--text-secondary)] ${isScrolled ? 'text-[10px]' : 'text-xs'}`}>
+                  让 AI 的每一次"思考"与"行动" 
+                  <span className="bg-gradient-to-r from-cyan-500 to-blue-500 bg-clip-text text-transparent font-medium ml-1">全程透明、可溯、可控</span>
+                </p>
               </div>
             </div>
 
             {/* 移除迷你统计图标 - 不再需要卡片缩小到标题栏的功能 */}
 
-            <div className="flex items-center gap-3">
-              {/* 自动刷新按钮 */}
+            <div className="flex items-center gap-1.5">
               <motion.button
-                whileHover={{ scale: 1.03, transition: { duration: 0.1 } }}
-                whileTap={{ scale: 0.97, transition: { duration: 0.05 } }}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
                 onClick={() => setAutoRefresh(!autoRefresh)}
-                className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-150 ease-out ${autoRefresh
-                    ? 'bg-[var(--success)]/10 text-[var(--success)] backdrop-blur-sm border border-[var(--success)]/20 shadow-sm'
-                    : 'bg-[var(--card-background)]/80 text-[var(--text-secondary)] backdrop-blur-sm border border-[var(--border-color)]/50 shadow-sm'
+                className={`group relative flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 ease-out ${
+                  autoRefresh
+                    ? isDarkMode 
+                      ? 'bg-[#34C759]/15 text-[#34C759] border border-[#34C759]/25'
+                      : 'bg-[#34C759]/10 text-[#248A3D] border border-[#34C759]/20'
+                    : isDarkMode 
+                      ? 'bg-white/5 text-gray-400 border border-white/10 hover:bg-white/8 hover:border-white/15'
+                      : 'bg-gray-50/80 text-gray-500 border border-gray-200/60 hover:bg-gray-100/80 hover:border-gray-300/60'
+                }`}
+                style={{
+                  backdropFilter: 'blur(20px)',
+                  WebkitBackdropFilter: 'blur(20px)',
+                }}
+              >
+                {autoRefresh ? (
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#34C759] opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#34C759]"></span>
+                  </span>
+                ) : (
+                  <span className="relative flex h-2 w-2 items-center justify-center">
+                    <span className={`inline-flex rounded-sm transition-all duration-200 ${
+                      isDarkMode ? 'bg-gray-500 group-hover:bg-gray-400' : 'bg-gray-400 group-hover:bg-gray-500'
+                    }`} style={{ width: '6px', height: '6px' }}></span>
+                  </span>
+                )}
+                <span className="font-[500] tracking-tight">{autoRefresh ? '自动刷新' : '已暂停'}</span>
+              </motion.button>
+
+              <div className={`flex items-center gap-1 p-1 rounded-full transition-all duration-300 ${
+                isDarkMode 
+                  ? 'bg-white/5 border border-white/10' 
+                  : 'bg-gray-100/80 border border-gray-200/60'
+              }`}
+              style={{
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+              }}
+              >
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={fetchData}
+                  disabled={isRefreshing}
+                  className={`relative p-2 rounded-full transition-all duration-200 ease-out group ${
+                    isDarkMode 
+                      ? 'text-gray-300 hover:bg-white/10 hover:text-blue-400' 
+                      : 'text-gray-600 hover:bg-white hover:text-blue-500'
+                  } disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  <RefreshCw className={`w-4 h-4 transition-transform duration-500 ${isRefreshing ? 'animate-spin' : 'group-hover:rotate-180'}`} />
+                </motion.button>
+
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={toggleTheme}
+                  className={`relative p-2 rounded-full transition-all duration-200 ease-out group ${
+                    isDarkMode 
+                      ? 'text-gray-300 hover:bg-white/10 hover:text-amber-400' 
+                      : 'text-gray-600 hover:bg-white hover:text-amber-500'
                   }`}
-              >
-                {autoRefresh ? '自动刷新' : '已暂停'}
-              </motion.button>
+                >
+                  {isDarkMode ? <Sun className="w-4 h-4 transition-transform duration-200 group-hover:rotate-12" /> : <Moon className="w-4 h-4 transition-transform duration-200 group-hover:-rotate-12" />}
+                </motion.button>
 
-              {/* 手动刷新按钮 */}
-              <motion.button
-                whileHover={{ scale: 1.03, transition: { duration: 0.1 } }}
-                whileTap={{ scale: 0.97, transition: { duration: 0.05 } }}
-                onClick={fetchData}
-                disabled={isRefreshing}
-                className="p-2 rounded-full bg-[var(--card-background)]/80 backdrop-blur-sm border border-[var(--border-color)]/50 text-[var(--accent-blue)] hover:bg-[var(--accent-blue)]/10 transition-all duration-150 ease-out shadow-sm disabled:opacity-50"
-              >
-                <RefreshCw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
-              </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={toggleTransparency}
+                  className={`relative p-2 rounded-full transition-all duration-200 ease-out group ${
+                    isTransparent
+                      ? isDarkMode
+                        ? 'bg-blue-500/20 text-blue-400'
+                        : 'bg-blue-500/15 text-blue-500'
+                      : isDarkMode 
+                        ? 'text-gray-300 hover:bg-white/10 hover:text-blue-400' 
+                        : 'text-gray-600 hover:bg-white hover:text-blue-500'
+                  }`}
+                >
+                  <Droplets className="w-4 h-4 transition-transform duration-200 group-hover:scale-110" />
+                </motion.button>
 
-              {/* 黑暗模式开关 */}
-              <motion.button
-                whileHover={{ scale: 1.03, transition: { duration: 0.1 } }}
-                whileTap={{ scale: 0.97, transition: { duration: 0.05 } }}
-                onClick={toggleTheme}
-                className="p-2 rounded-full bg-[var(--card-background)]/80 backdrop-blur-sm border border-[var(--border-color)]/50 text-[var(--foreground)] hover:bg-[var(--border-color)]/20 transition-all duration-150 ease-out shadow-sm"
-              >
-                {isDarkMode ? (
-                  <Moon className="w-5 h-5 text-[var(--warning)]" />
-                ) : (
-                  <Sun className="w-5 h-5 text-[var(--warning)]" />
-                )}
-              </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={toggleWideScreen}
+                  className={`relative p-2 rounded-full transition-all duration-200 ease-out group ${
+                    isWideScreen
+                      ? isDarkMode
+                        ? 'bg-purple-500/20 text-purple-400'
+                        : 'bg-purple-500/15 text-purple-500'
+                      : isDarkMode 
+                        ? 'text-gray-300 hover:bg-white/10 hover:text-purple-400' 
+                        : 'text-gray-600 hover:bg-white hover:text-purple-500'
+                  }`}
+                  title={isWideScreen ? "默认模式" : "宽屏模式"}
+                >
+                  {isWideScreen ? <Shrink className="w-4 h-4 transition-transform duration-200 group-hover:scale-110" /> : <Expand className="w-4 h-4 transition-transform duration-200 group-hover:scale-110" />}
+                </motion.button>
+              </div>
 
-              {/* 透明效果开关 */}
               <motion.button
-                whileHover={{ scale: 1.03, transition: { duration: 0.1 } }}
-                whileTap={{ scale: 0.97, transition: { duration: 0.05 } }}
-                onClick={toggleTransparency}
-                className="p-2 rounded-full bg-[var(--card-background)]/80 backdrop-blur-sm border border-[var(--border-color)]/50 text-[var(--foreground)] hover:bg-[var(--border-color)]/20 transition-all duration-150 ease-out shadow-sm"
-              >
-                <Droplets 
-                  className="w-5 h-5 transition-all duration-150 ease-out"
-                  style={{
-                    color: isTransparent 
-                      ? 'var(--accent-blue)' 
-                      : 'var(--text-secondary)'
-                  }} 
-                />
-              </motion.button>
-
-              {/* 宽屏模式开关 */}
-              <motion.button
-                whileHover={{ scale: 1.03, transition: { duration: 0.1 } }}
-                whileTap={{ scale: 0.97, transition: { duration: 0.05 } }}
-                onClick={toggleWideScreen}
-                className="p-2 rounded-full bg-[var(--card-background)]/80 backdrop-blur-sm border border-[var(--border-color)]/50 text-[var(--foreground)] hover:bg-[var(--border-color)]/20 transition-all duration-150 ease-out shadow-sm"
-                title={isWideScreen ? "默认模式" : "宽屏模式"}
-              >
-                {isWideScreen ? (
-                  <Shrink 
-                    className="w-5 h-5 transition-all duration-150 ease-out"
-                    style={{ color: 'var(--accent-blue)' }} 
-                  />
-                ) : (
-                  <Expand 
-                    className="w-5 h-5 transition-all duration-150 ease-out"
-                    style={{ color: 'var(--accent-blue)' }} 
-                  />
-                )}
-              </motion.button>
-
-              {/* AI 助手按钮 */}
-              <motion.button
-                whileHover={{ scale: 1.03, transition: { duration: 0.1 } }}
-                whileTap={{ scale: 0.97, transition: { duration: 0.05 } }}
-                onClick={() => openAIModal()}
-                className="p-2 rounded-full bg-[var(--card-background)]/80 backdrop-blur-sm border border-[var(--border-color)]/50 text-[var(--accent-blue)] hover:bg-[var(--accent-blue)]/10 transition-all duration-150 ease-out shadow-sm"
-                title="AI 助手"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                </svg>
-              </motion.button>
-
-              {/* 登出按钮 */}
-              <motion.button
-                whileHover={{ scale: 1.03, transition: { duration: 0.1 } }}
-                whileTap={{ scale: 0.97, transition: { duration: 0.05 } }}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 onClick={() => signOut({ callbackUrl: '/' })}
-                className="p-2 rounded-full bg-[var(--card-background)]/80 backdrop-blur-sm border border-[var(--border-color)]/50 text-[var(--accent-blue)] hover:bg-[var(--accent-blue)]/10 transition-all duration-150 ease-out shadow-sm"
+                className={`relative p-2 rounded-full transition-all duration-200 ease-out group ${
+                  isDarkMode 
+                    ? 'text-gray-400 hover:bg-red-500/15 hover:text-red-400' 
+                    : 'text-gray-500 hover:bg-red-50 hover:text-red-500'
+                }`}
               >
-                <LogOut className="w-5 h-5" />
+                <LogOut className="w-4 h-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
               </motion.button>
             </div>
           </div>
@@ -746,6 +773,7 @@ export default function Dashboard() {
       </header>
       
       {/* 可展开的全局工具栏 - 根据当前激活的标签页显示不同内容 */}
+      {activeTab !== 'security' && (
       <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50">
         {/* 优化的玻璃效果容器 */}
         <div 
@@ -874,7 +902,8 @@ export default function Dashboard() {
                               'AG-UI': true,
                               'FILE': true,
                               'EXEC': true,
-                              'OPENCLAW': true
+                              'OPENCLAW': true,
+                              'UNKNOWN': true
                             }
                           }))}
                           className="text-xs text-[var(--accent-blue)] hover:text-[var(--accent-blue-hover)] transition-colors"
@@ -917,7 +946,8 @@ export default function Dashboard() {
                               'AG-UI': true,
                               'FILE': true,
                               'EXEC': true,
-                              'OPENCLAW': true
+                              'OPENCLAW': true,
+                              'UNKNOWN': true
                             },
                             keyword: '',
                             fullTextSearch: false
@@ -1091,7 +1121,8 @@ export default function Dashboard() {
                               'AG-UI': true,
                               'FILE': true,
                               'EXEC': true,
-                              'OPENCLAW': true
+                              'OPENCLAW': true,
+                              'UNKNOWN': true
                             }
                           }))}
                           className="text-xs text-[var(--accent-blue)] hover:text-[var(--accent-blue-hover)] transition-colors"
@@ -1145,7 +1176,8 @@ export default function Dashboard() {
                           'AG-UI': true,
                           'FILE': true,
                           'EXEC': true,
-                          'OPENCLAW': true
+                          'OPENCLAW': true,
+                          'UNKNOWN': true
                         }
                       })}
                       className="w-full px-4 py-1.5 rounded-xl bg-white/10 dark:bg-black/20 border border-black/20 dark:border-white/20 text-[var(--foreground)] text-sm hover:bg-white/20 dark:hover:bg-black/30 transition-all duration-200"
@@ -1505,7 +1537,8 @@ export default function Dashboard() {
                             'AG-UI': true,
                             'FILE': true,
                             'EXEC': true,
-                            'OPENCLAW': true
+                            'OPENCLAW': true,
+                            'UNKNOWN': true
                           }
                         }))}
                         className="text-xs text-[var(--accent-blue)] hover:text-[var(--accent-blue-hover)] transition-colors"
@@ -1593,7 +1626,8 @@ export default function Dashboard() {
                         'AG-UI': true,
                         'FILE': true,
                         'EXEC': true,
-                        'OPENCLAW': true
+                        'OPENCLAW': true,
+                        'UNKNOWN': true
                       },
                       riskLevels: {
                         'HIGH': true,
@@ -1697,6 +1731,7 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+      )}
       
       {/* 添加CSS动画 */}
       <style jsx>{`
@@ -1713,8 +1748,12 @@ export default function Dashboard() {
       `}</style>
 
       <main className={`${isWideScreen ? 'w-full' : 'max-w-7xl mx-auto'} px-6 py-8 transition-all duration-300`}>
-        {/* Tab切换器 */}
-        <div className="mb-8 flex justify-center">
+        <div className="mb-8 flex items-center justify-center gap-4">
+          <FloatingTab
+            isActive={activeTab === 'security'}
+            onClick={() => setActiveTab('security')}
+            label="智能防护"
+          />
           <TabSwitcher
             tabs={[
               { id: 'logs', label: '实时日志' },
@@ -1738,7 +1777,16 @@ export default function Dashboard() {
           </div>
         ) : (
           <>
-            {/* 只在日志Tab时显示统计卡片和图表 */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, ease: 'easeInOut' }}
+            >
+              {activeTab === 'security' && <SecurityShield />}
+            </motion.div>
+
+            {activeTab !== 'security' && (
+              <>
             {activeTab === 'logs' && (
               <>
                 {/* 根据开关状态显示汇总卡片 */}
@@ -1769,6 +1817,7 @@ export default function Dashboard() {
                         title="总日志数"
                         value={stats?.totalRequests || 0}
                         icon={Activity}
+                        gradient="blue"
                         onClick={() => setFilterConditions(prev => ({ ...prev, types: {
                           'HTTP': true,
                           'LLM': true,
@@ -1778,13 +1827,15 @@ export default function Dashboard() {
                           'AG-UI': true,
                           'FILE': true,
                           'EXEC': true,
-                          'OPENCLAW': true
+                          'OPENCLAW': true,
+                          'UNKNOWN': true
                         } }))}
                       />
                       <StatCard
                         title="关键服务日志数"
                         value={stats?.activeSessions || 0}
                         icon={Server}
+                        gradient="purple"
                         onClick={() => {
                           setFilterConditions(prev => ({
                             ...prev,
@@ -1797,7 +1848,8 @@ export default function Dashboard() {
                               'AG-UI': true,
                               'FILE': false,
                               'EXEC': false,
-                              'OPENCLAW': false
+                              'OPENCLAW': false,
+                              'UNKNOWN': false
                             }
                           }));
                         }}
@@ -1806,11 +1858,13 @@ export default function Dashboard() {
                         title="总 Token 数"
                         value={stats?.totalTokens || 0}
                         icon={Zap}
+                        gradient="cyan"
                       />
                       <StatCard
                         title="平均延迟"
                         value={`${(stats?.averageLatency || 0).toFixed(0)}ms`}
                         icon={Clock}
+                        gradient="emerald"
                       />
                     </motion.div>
 
@@ -1890,7 +1944,8 @@ export default function Dashboard() {
                                             'AG-UI': type === 'AG-UI',
                                             FILE: type === 'FILE',
                                             EXEC: type === 'EXEC',
-                                            OPENCLAW: type === 'OPENCLAW'
+                                            OPENCLAW: type === 'OPENCLAW',
+                                            UNKNOWN: type === 'UNKNOWN'
                                           }
                                         }));
                                       }}
@@ -2020,6 +2075,10 @@ export default function Dashboard() {
                       targetSessionId={targetSessionId}
                       filterConditions={treeFilterConditions}
                       onTypeFilterClick={handleTreeTypeFilterClick}
+                      onNavigateToSecurity={() => {
+                        setActiveTab('security');
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
                     />
                   </div>
                 </div>
@@ -2052,6 +2111,8 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
+              </>
+            )}
           </>
         )}
       </main>

@@ -8,41 +8,138 @@ interface BackgroundLayoutProps {
   children: React.ReactNode;
 }
 
+function FloatingOrbs({ isDarkMode }: { isDarkMode: boolean }) {
+  return (
+    <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
+      <motion.div
+        animate={{
+          x: [0, 100, 50, 0],
+          y: [0, 50, 100, 0],
+          scale: [1, 1.2, 0.9, 1],
+        }}
+        transition={{
+          duration: 20,
+          repeat: Infinity,
+          ease: "easeInOut",
+        }}
+        className="absolute -top-40 -left-40 w-[500px] h-[500px] rounded-full"
+        style={{
+          background: isDarkMode 
+            ? 'radial-gradient(circle, rgba(59, 130, 246, 0.35) 0%, rgba(99, 102, 241, 0.2) 40%, transparent 70%)'
+            : 'radial-gradient(circle, rgba(59, 130, 246, 0.25) 0%, rgba(99, 102, 241, 0.15) 40%, transparent 70%)',
+          filter: 'blur(60px)',
+        }}
+      />
+      <motion.div
+        animate={{
+          x: [0, -80, -40, 0],
+          y: [0, 80, 40, 0],
+          scale: [1, 0.8, 1.1, 1],
+        }}
+        transition={{
+          duration: 25,
+          repeat: Infinity,
+          ease: "easeInOut",
+        }}
+        className="absolute top-1/4 -right-40 w-[450px] h-[450px] rounded-full"
+        style={{
+          background: isDarkMode
+            ? 'radial-gradient(circle, rgba(139, 92, 246, 0.3) 0%, rgba(168, 85, 247, 0.15) 40%, transparent 70%)'
+            : 'radial-gradient(circle, rgba(139, 92, 246, 0.2) 0%, rgba(168, 85, 247, 0.1) 40%, transparent 70%)',
+          filter: 'blur(70px)',
+        }}
+      />
+      <motion.div
+        animate={{
+          x: [0, 60, -30, 0],
+          y: [0, -60, 30, 0],
+          scale: [1, 1.3, 0.85, 1],
+        }}
+        transition={{
+          duration: 18,
+          repeat: Infinity,
+          ease: "easeInOut",
+        }}
+        className="absolute -bottom-20 left-1/4 w-[400px] h-[400px] rounded-full"
+        style={{
+          background: isDarkMode
+            ? 'radial-gradient(circle, rgba(6, 182, 212, 0.3) 0%, rgba(34, 211, 238, 0.15) 40%, transparent 70%)'
+            : 'radial-gradient(circle, rgba(6, 182, 212, 0.2) 0%, rgba(34, 211, 238, 0.1) 40%, transparent 70%)',
+          filter: 'blur(60px)',
+        }}
+      />
+      <motion.div
+        animate={{
+          x: [0, -50, 80, 0],
+          y: [0, 100, -50, 0],
+          scale: [1, 0.9, 1.15, 1],
+        }}
+        transition={{
+          duration: 22,
+          repeat: Infinity,
+          ease: "easeInOut",
+        }}
+        className="absolute top-2/3 right-1/3 w-[350px] h-[350px] rounded-full"
+        style={{
+          background: isDarkMode
+            ? 'radial-gradient(circle, rgba(236, 72, 153, 0.25) 0%, rgba(244, 114, 182, 0.12) 40%, transparent 70%)'
+            : 'radial-gradient(circle, rgba(236, 72, 153, 0.18) 0%, rgba(244, 114, 182, 0.08) 40%, transparent 70%)',
+          filter: 'blur(50px)',
+        }}
+      />
+      <motion.div
+        animate={{
+          x: [0, 70, -20, 0],
+          y: [0, -40, 70, 0],
+          scale: [1, 1.1, 0.95, 1],
+        }}
+        transition={{
+          duration: 15,
+          repeat: Infinity,
+          ease: "easeInOut",
+        }}
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full"
+        style={{
+          background: isDarkMode
+            ? 'radial-gradient(circle, rgba(16, 185, 129, 0.2) 0%, rgba(52, 211, 153, 0.1) 40%, transparent 70%)'
+            : 'radial-gradient(circle, rgba(16, 185, 129, 0.15) 0%, rgba(52, 211, 153, 0.08) 40%, transparent 70%)',
+          filter: 'blur(80px)',
+        }}
+      />
+      <motion.div
+        animate={{
+          x: [0, 40, -60, 0],
+          y: [0, -80, 40, 0],
+          scale: [1, 1.15, 0.9, 1],
+        }}
+        transition={{
+          duration: 28,
+          repeat: Infinity,
+          ease: "easeInOut",
+        }}
+        className="absolute top-1/4 left-1/3 w-[380px] h-[380px] rounded-full"
+        style={{
+          background: isDarkMode
+            ? 'radial-gradient(circle, rgba(251, 146, 60, 0.2) 0%, rgba(249, 115, 22, 0.1) 40%, transparent 70%)'
+            : 'radial-gradient(circle, rgba(251, 146, 60, 0.15) 0%, rgba(249, 115, 22, 0.08) 40%, transparent 70%)',
+          filter: 'blur(55px)',
+        }}
+      />
+    </div>
+  );
+}
+
 export default function BackgroundLayout({ children }: BackgroundLayoutProps) {
   const { isDarkMode } = useTheme();
   const { isTransparent } = useTransparency();
 
   return (
-    <div className="min-h-screen transition-colors duration-300">
-      {/* 背景装饰 - 根据isTransparent状态控制显示 */}
-      {isTransparent && (
-        <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
-          {/* 主背景渐变 */}
-          <div className={`fixed inset-0 ${isDarkMode 
-            ? 'bg-gradient-to-br from-gray-900 via-slate-900 to-gray-800' 
-            : 'bg-gradient-to-br from-blue-10 via-indigo-50 to-purple-50'}`}></div>
-          
-          {/* 多个流线型装饰元素 - 优化版 */}
-          <motion.div
-            className="absolute -top-20 -right-20 w-96 h-96 rounded-full bg-blue-500/30 blur-3xl"
-            animate={{ scale: [1, 1.2, 1], opacity: [0.6, 0.8, 0.6] }}
-            transition={{ duration: 12, repeat: Infinity, ease: "easeInOut" }}
-            style={{ willChange: 'transform, opacity' }}
-          />
-          <motion.div
-            className="absolute -bottom-30 -left-30 w-96 h-96 rounded-full bg-purple-500/30 blur-3xl"
-            animate={{ scale: [1, 1.3, 1], opacity: [0.5, 0.7, 0.5] }}
-            transition={{ duration: 15, repeat: Infinity, ease: "easeInOut", delay: 2 }}
-            style={{ willChange: 'transform, opacity' }}
-          />
-          <motion.div
-            className="absolute top-1/2 left-1/2 w-80 h-80 rounded-full bg-cyan-500/20 blur-3xl"
-            animate={{ scale: [1, 1.1, 1], opacity: [0.4, 0.6, 0.4] }}
-            transition={{ duration: 10, repeat: Infinity, ease: "easeInOut", delay: 4 }}
-            style={{ willChange: 'transform, opacity' }}
-          />
-        </div>
-      )}
+    <div className={`min-h-screen transition-colors duration-500 ${
+      isDarkMode 
+        ? 'bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950' 
+        : 'bg-gradient-to-br from-slate-50 via-white to-slate-100'
+    }`}>
+      {isTransparent && <FloatingOrbs isDarkMode={isDarkMode} />}
       
       <div className="relative z-10">
         {children}
