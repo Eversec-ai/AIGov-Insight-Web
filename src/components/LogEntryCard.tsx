@@ -6,15 +6,133 @@ import { getDataTypeColor, getDataTypeIcon, formatLatency, formatTokens, getRisk
 import { Activity, ChevronDown, ChevronUp, Clock, Trees, GitBranch, LineChart } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
+import { CopyableLogId } from '@/components/CopyableLogId';
 
-// BASE64解码函数
+// BASE64解码函数 - 支持UTF-8编码
 const decodeBase64 = (str: string | undefined): string => {
   if (!str) return '';
   try {
-    return atob(str);
-  } catch (e) {
-    console.error('Failed to decode base64:', e);
+    const binaryString = atob(str);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return new TextDecoder('utf-8').decode(bytes);
+  } catch {
     return str;
+  }
+};
+
+// 解析OPENCLAW的payload，提取method信息
+const parseOpenClawMethods = (payload: string): string[] => {
+  if (!payload) return [];
+  
+  try {
+    const methods: string[] = [];
+    const jsonObjects = payload.split('}{').map((obj, index, arr) => {
+      if (index === 0) return obj + '}';
+      if (index === arr.length - 1) return '{' + obj;
+      return '{' + obj + '}';
+    });
+    
+    for (const jsonStr of jsonObjects) {
+      try {
+        const obj = JSON.parse(jsonStr);
+        if (obj.method) {
+          methods.push(obj.method);
+        }
+      } catch {
+        // 忽略解析失败的JSON对象
+      }
+    }
+    
+    return methods;
+  } catch {
+    return [];
+  }
+};
+
+// 解析VLLM的SSE格式response，提取关键信息
+interface VLLMResponseInfo {
+  toolCalls?: Array<{name: string; arguments: string}>;
+  usage?: {prompt_tokens: number; completion_tokens: number; total_tokens: number};
+  finishReason?: string;
+  hasContent?: boolean;
+}
+
+const parseVLLMResponse = (payload: string): VLLMResponseInfo => {
+  if (!payload) return {};
+  
+  try {
+    const result: VLLMResponseInfo = {};
+    const toolCallsMap = new Map<string, {name: string; arguments: string}>();
+    
+    // 提取所有data:开头的行
+    const lines = payload.split('\n');
+    const dataLines = lines.filter(line => line.trim().startsWith('data:'));
+    
+    for (const line of dataLines) {
+      try {
+        const jsonStr = line.replace(/^data:\s*/, '').trim();
+        if (jsonStr === '[DONE]') continue;
+        
+        const obj = JSON.parse(jsonStr);
+        
+        // 提取usage信息
+        if (obj.usage) {
+          result.usage = {
+            prompt_tokens: obj.usage.prompt_tokens || 0,
+            completion_tokens: obj.usage.completion_tokens || 0,
+            total_tokens: obj.usage.total_tokens || 0
+          };
+        }
+        
+        // 提取tool_calls信息
+        if (obj.choices && Array.isArray(obj.choices)) {
+          for (const choice of obj.choices) {
+            // 提取finish_reason
+            if (choice.finish_reason && !result.finishReason) {
+              result.finishReason = choice.finish_reason;
+            }
+            
+            // 提取tool_calls
+            if (choice.delta && choice.delta.tool_calls) {
+              for (const tc of choice.delta.tool_calls) {
+                if (tc.function) {
+                  const id = tc.id || `index_${tc.index}`;
+                  if (!toolCallsMap.has(id)) {
+                    toolCallsMap.set(id, {name: '', arguments: ''});
+                  }
+                  const existing = toolCallsMap.get(id)!;
+                  if (tc.function.name) {
+                    existing.name = tc.function.name;
+                  }
+                  if (tc.function.arguments) {
+                    existing.arguments += tc.function.arguments;
+                  }
+                }
+              }
+            }
+            
+            // 检查是否有content
+            if (choice.delta && choice.delta.content) {
+              result.hasContent = true;
+            }
+          }
+        }
+      } catch {
+        // 忽略解析失败的JSON对象
+      }
+    }
+    
+    // 转换tool_calls为数组
+    if (toolCallsMap.size > 0) {
+      result.toolCalls = Array.from(toolCallsMap.values());
+    }
+    
+    return result;
+  } catch {
+    return {};
   }
 };
 
@@ -49,18 +167,49 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
         break;
       case 'LLM':
       case 'AGENT':
-        // 显示模型名称
-        if (entry.ModelName) {
-          return `${entry.ModelName} Request`;
-        } else {
-          if (parsedReqPayload) {
-            const match = parsedReqPayload.match(/^(GET|POST|PUT|DELETE|PATCH)\s+([^\s]+)/i);
-            if (match) {
-              return `${match[1]} ${match[2]}`;
-            }
+        // 解析VLLM response，提取关键信息
+        const vllmInfo = parseVLLMResponse(parsedRspPayload);
+        
+        // 优先显示Query摘要
+        const query = entry.llmQuery || entry.parsedQuery;
+        if (query) {
+          const shortQuery = query.length > 50 ? query.substring(0, 50) + '...' : query;
+          return shortQuery;
+        }
+        
+        // 如果有tool_calls，显示工具调用信息
+        if (vllmInfo.toolCalls && vllmInfo.toolCalls.length > 0) {
+          const toolNames = vllmInfo.toolCalls.map(tc => tc.name).filter(Boolean);
+          if (toolNames.length > 0) {
+            return `调用工具: ${toolNames.join(', ')}`;
           }
         }
-        break;
+        
+        // 如果有finish_reason为tool_calls，说明是工具调用
+        if (vllmInfo.finishReason === 'tool_calls') {
+          return '工具调用';
+        }
+        
+        // 显示Answer摘要（优先于"对话响应"）
+        const answer = entry.llmAnswer || entry.parsedAnswer;
+        if (answer) {
+          const shortAnswer = answer.length > 50 ? answer.substring(0, 50) + '...' : answer;
+          return shortAnswer;
+        }
+        
+        // 如果有content但没有Answer，显示"对话响应"
+        if (vllmInfo.hasContent) {
+          return '对话响应';
+        }
+        
+        // 默认显示
+        if (parsedReqPayload) {
+          const match = parsedReqPayload.match(/^(GET|POST|PUT|DELETE|PATCH)\s+([^\s]+)/i);
+          if (match) {
+            return `${match[1]} ${match[2]}`;
+          }
+        }
+        return 'LLM Request';
       case 'AG-UI':
         // 提取HTTP方法
         let httpMethod = '';
@@ -137,7 +286,25 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
         }
         return 'Command Execution';
       case 'OPENCLAW':
-        // 显示OPENCLAW相关信息
+        // 解析OPENCLAW的payload，提取method信息
+        const reqMethods = parseOpenClawMethods(parsedReqPayload);
+        if (reqMethods.length > 0) {
+          // 如果有多个method，只显示第一个
+          const method = reqMethods[0];
+          // 根据method类型生成更友好的描述
+          if (method === 'node.list') {
+            return 'OpenClaw 节点列表查询';
+          } else if (method === 'chat.history') {
+            return 'OpenClaw 聊天历史查询';
+          } else if (method.startsWith('node.')) {
+            return `OpenClaw 节点操作: ${method.substring(5)}`;
+          } else if (method.startsWith('chat.')) {
+            return `OpenClaw 聊天操作: ${method.substring(5)}`;
+          } else {
+            return `OpenClaw ${method}`;
+          }
+        }
+        // 如果没有method，显示查询内容
         if (parsedQuery) {
           return parsedQuery.length > 100 ? parsedQuery.substring(0, 100) + '...' : parsedQuery;
         }
@@ -147,7 +314,7 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
         if (entry.llmProvider) {
           return `${entry.llmProvider} Provider`;
         }
-        return 'OpenClaw Request';
+        return 'OpenClaw 请求';
     }
 
     // 其他类型优先显示用户查询
@@ -191,9 +358,50 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
       // LLM类型日志：显示摘要信息
       const parts = [];
       
+      // 解析VLLM response，提取关键信息
+      const vllmDescInfo = parseVLLMResponse(parsedRspPayload);
+      
       // 添加llmModel
       if (entry.llmModel) {
         parts.push(entry.llmModel);
+      }
+      
+      // 添加tool_calls信息
+      if (vllmDescInfo.toolCalls && vllmDescInfo.toolCalls.length > 0) {
+        for (const tc of vllmDescInfo.toolCalls) {
+          if (tc.name) {
+            let toolInfo = `工具: ${tc.name}`;
+            if (tc.arguments) {
+              try {
+                const args = JSON.parse(tc.arguments);
+                const argKeys = Object.keys(args);
+                if (argKeys.length > 0) {
+                  toolInfo += ` (${argKeys.join(', ')})`;
+                }
+              } catch {
+                // 如果解析失败，显示原始参数的前30个字符
+                const shortArgs = tc.arguments.length > 30 ? tc.arguments.substring(0, 30) + '...' : tc.arguments;
+                toolInfo += ` (${shortArgs})`;
+              }
+            }
+            parts.push(toolInfo);
+          }
+        }
+      }
+      
+      // 添加usage信息
+      if (vllmDescInfo.usage) {
+        parts.push(`Token: ${vllmDescInfo.usage.prompt_tokens}+${vllmDescInfo.usage.completion_tokens}=${vllmDescInfo.usage.total_tokens}`);
+      }
+      
+      // 添加finish_reason
+      if (vllmDescInfo.finishReason) {
+        const reasonMap: Record<string, string> = {
+          'tool_calls': '工具调用',
+          'stop': '正常结束',
+          'length': '达到长度限制'
+        };
+        parts.push(`结束原因: ${reasonMap[vllmDescInfo.finishReason] || vllmDescInfo.finishReason}`);
       }
       
       // 添加Query摘要
@@ -261,6 +469,14 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
     if (entry.dataType === 'OPENCLAW') {
       const parts = [];
       
+      // 解析method信息
+      const methods = parseOpenClawMethods(parsedReqPayload);
+      if (methods.length > 0) {
+        // 显示所有method（最多3个）
+        const displayMethods = methods.slice(0, 3);
+        parts.push(`方法: ${displayMethods.join(', ')}${methods.length > 3 ? '...' : ''}`);
+      }
+      
       if (entry.llmProvider) {
         parts.push(`大模型服务: ${entry.llmProvider}`);
       }
@@ -272,6 +488,11 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
           toolInfo += ` , 执行命令: ${shortInput}`;
         }
         parts.push(toolInfo);
+      }
+      
+      // 添加执行结果 - 仅在OPENCLAW类型中显示
+      if (entry.llmStream) {
+        parts.push(`执行结果: ${entry.llmStream === '1' ? '失败' : '成功'}`);
       }
       
       return parts.join(' , ');
@@ -320,9 +541,7 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
               <span className="text-xs text-[var(--text-secondary)]">
                 {entry.sessionCreatedAt} {entry.sessionEndedAt ? `~ ${entry.sessionEndedAt}` : ''}
               </span>
-              <span className="text-xs text-[var(--text-secondary)] ml-auto">
-                {entry.logID || entry.id}
-              </span>
+              <CopyableLogId id={entry.logID || entry.id} className="ml-auto" />
             </div>
 
             <h4 className="text-sm font-medium text-[var(--foreground)] truncate mb-1">
@@ -734,7 +953,7 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
               )}
 
               {/* LLM相关信息 */}
-              {(entry.ModelName || entry.llmProvider || entry.llmVersion) && (
+              {(entry.ModelName || entry.llmProvider || entry.llmVersion || (entry.dataType === 'OPENCLAW' && entry.llmStream)) && (
                 <div className="mb-6">
                   <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-3 uppercase tracking-wider">LLM相关</h5>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -750,6 +969,12 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
                       <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">API版本</p>
                       <p className="text-[var(--foreground)]">{entry.llmVersion || 'N/A'}</p>
                     </div>
+                    {entry.dataType === 'OPENCLAW' && entry.llmStream && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">执行结果</p>
+                        <p className="text-[var(--foreground)]">{entry.llmStream === '1' ? '操作失败' : '操作成功'}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -803,25 +1028,25 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
                   {entry.parsedQuery && (
                     <div className="mb-4">
                       <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">用户提问</p>
-                      <div className="text-[var(--foreground)] bg-[var(--card-background)] p-3 rounded-lg whitespace-pre-wrap">
+                      <div className="text-[var(--foreground)] text-xs bg-[var(--card-background)] p-3 rounded-lg whitespace-pre-wrap">
                         {entry.parsedQuery}
                       </div>
                     </div>
                   )}
-                  {entry.parsedAnswer && (
-                    <div className="mb-4">
-                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">AI回答</p>
-                      <div className="text-[var(--foreground)] bg-[var(--card-background)] p-3 rounded-lg whitespace-pre-wrap">
-                        {entry.parsedAnswer}
-                      </div>
-                    </div>
-                  )}
                   {entry.thought && (
-                    <div>
+                    <div className="mb-4">
                       <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">思考过程</p>
                       <pre className="text-[var(--foreground)] font-mono text-xs bg-[var(--card-background)] p-3 rounded-lg overflow-x-auto max-h-40">
-                        {entry.thought}
+                        {decodeBase64(entry.thought)}
                       </pre>
+                    </div>
+                  )}
+                  {entry.parsedAnswer && (
+                    <div>
+                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">AI回答</p>
+                      <div className="text-[var(--foreground)] text-xs bg-[var(--card-background)] p-3 rounded-lg whitespace-pre-wrap">
+                        {entry.parsedAnswer}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -979,10 +1204,12 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
                       <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">LLM模型</p>
                       <p className="text-[var(--foreground)]">{entry.llmModel || 'N/A'}</p>
                     </div>
-                    <div>
-                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">流式模式</p>
-                      <p className="text-[var(--foreground)]">{entry.llmStream === '1' ? '是' : '否'}</p>
-                    </div>
+                    {entry.dataType === 'OPENCLAW' && entry.llmStream && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">执行结果</p>
+                        <p className="text-[var(--foreground)]">{entry.llmStream === '1' ? '操作失败' : '操作成功'}</p>
+                      </div>
+                    )}
                     <div>
                       <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">LLM轮数</p>
                       <p className="text-[var(--foreground)]">{entry.llmRound || 'N/A'}</p>
@@ -1240,6 +1467,29 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
           )}
         </motion.div>
       )}
+      <style jsx>{`
+        @keyframes fadeInOut {
+          0% {
+            opacity: 0;
+            transform: translateX(-50%) translateY(4px);
+          }
+          15% {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+          }
+          85% {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+          }
+          100% {
+            opacity: 0;
+            transform: translateX(-50%) translateY(-4px);
+          }
+        }
+        .animate-fade-in-out {
+          animation: fadeInOut 2s ease-in-out forwards;
+        }
+      `}</style>
     </motion.div>
   );
 }

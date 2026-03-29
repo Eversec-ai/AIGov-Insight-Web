@@ -1,12 +1,15 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trees, ChevronDown, ChevronUp, Clock, Activity, BarChart3, Shield, Calendar, Info, AlertTriangle, AlertCircle, CheckCircle2, FileText, Zap, Network, LayoutDashboard, Layers } from 'lucide-react';
+import { Trees, ChevronDown, ChevronUp, Clock, Activity, BarChart3, Shield, Calendar, Info, AlertTriangle, AlertCircle, CheckCircle2, FileText, Zap, Network, LayoutDashboard, Layers, ShieldPlus, Sparkles, ShieldX, ShieldQuestion, ShieldAlert } from 'lucide-react';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { ParsedLogEntry } from '@/types/log';
 import { getDataTypeColor, getDataTypeIcon } from '@/lib/logParser';
 import { aggregateSessions } from '@/lib/sessionAggregator';
 import { TopologyGraph } from './TopologyGraph';
+import { useTheme } from '@/context/ThemeContext';
+import { CopyableLogId } from '@/components/CopyableLogId';
+import { useProtectionRule, PrefilledRuleData } from '@/context/ProtectionRuleContext';
 
 interface TreeViewProps {
   logs: ParsedLogEntry[];
@@ -22,6 +25,7 @@ interface TreeViewProps {
       'FILE': boolean;
       'EXEC': boolean;
       'OPENCLAW': boolean;
+      'UNKNOWN': boolean;
     };
     riskLevels: {
       'HIGH': boolean;
@@ -32,6 +36,7 @@ interface TreeViewProps {
     searchKeyword: string;
   };
   onTypeFilterClick?: (type: string) => void;
+  onNavigateToSecurity?: () => void;
 }
 
 interface AggregatedSession {
@@ -42,14 +47,131 @@ interface AggregatedSession {
   endTime: Date;
 }
 
-// BASE64解码函数
+// BASE64解码函数 - 支持UTF-8编码
 const decodeBase64 = (str: string | undefined): string => {
   if (!str) return '';
   try {
-    return atob(str);
-  } catch (e) {
-    console.error('Failed to decode base64:', e);
+    const binaryString = atob(str);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return new TextDecoder('utf-8').decode(bytes);
+  } catch {
     return str;
+  }
+};
+
+// 解析OPENCLAW的payload，提取method信息
+const parseOpenClawMethods = (payload: string): string[] => {
+  if (!payload) return [];
+  
+  try {
+    const methods: string[] = [];
+    const jsonObjects = payload.split('}{').map((obj, index, arr) => {
+      if (index === 0) return obj + '}';
+      if (index === arr.length - 1) return '{' + obj;
+      return '{' + obj + '}';
+    });
+    
+    for (const jsonStr of jsonObjects) {
+      try {
+        const obj = JSON.parse(jsonStr);
+        if (obj.method) {
+          methods.push(obj.method);
+        }
+      } catch {
+        // 忽略解析失败的JSON对象
+      }
+    }
+    
+    return methods;
+  } catch {
+    return [];
+  }
+};
+
+// 解析VLLM的SSE格式response，提取关键信息
+interface VLLMResponseInfo {
+  toolCalls?: Array<{name: string; arguments: string}>;
+  usage?: {prompt_tokens: number; completion_tokens: number; total_tokens: number};
+  finishReason?: string;
+  hasContent?: boolean;
+}
+
+const parseVLLMResponse = (payload: string): VLLMResponseInfo => {
+  if (!payload) return {};
+  
+  try {
+    const result: VLLMResponseInfo = {};
+    const toolCallsMap = new Map<string, {name: string; arguments: string}>();
+    
+    // 提取所有data:开头的行
+    const lines = payload.split('\n');
+    const dataLines = lines.filter(line => line.trim().startsWith('data:'));
+    
+    for (const line of dataLines) {
+      try {
+        const jsonStr = line.replace(/^data:\s*/, '').trim();
+        if (jsonStr === '[DONE]') continue;
+        
+        const obj = JSON.parse(jsonStr);
+        
+        // 提取usage信息
+        if (obj.usage) {
+          result.usage = {
+            prompt_tokens: obj.usage.prompt_tokens || 0,
+            completion_tokens: obj.usage.completion_tokens || 0,
+            total_tokens: obj.usage.total_tokens || 0
+          };
+        }
+        
+        // 提取tool_calls信息
+        if (obj.choices && Array.isArray(obj.choices)) {
+          for (const choice of obj.choices) {
+            // 提取finish_reason
+            if (choice.finish_reason && !result.finishReason) {
+              result.finishReason = choice.finish_reason;
+            }
+            
+            // 提取tool_calls
+            if (choice.delta && choice.delta.tool_calls) {
+              for (const tc of choice.delta.tool_calls) {
+                if (tc.function) {
+                  const id = tc.id || `index_${tc.index}`;
+                  if (!toolCallsMap.has(id)) {
+                    toolCallsMap.set(id, {name: '', arguments: ''});
+                  }
+                  const existing = toolCallsMap.get(id)!;
+                  if (tc.function.name) {
+                    existing.name = tc.function.name;
+                  }
+                  if (tc.function.arguments) {
+                    existing.arguments += tc.function.arguments;
+                  }
+                }
+              }
+            }
+            
+            // 检查是否有content
+            if (choice.delta && choice.delta.content) {
+              result.hasContent = true;
+            }
+          }
+        }
+      } catch {
+        // 忽略解析失败的JSON对象
+      }
+    }
+    
+    // 转换tool_calls为数组
+    if (toolCallsMap.size > 0) {
+      result.toolCalls = Array.from(toolCallsMap.values());
+    }
+    
+    return result;
+  } catch {
+    return {};
   }
 };
 
@@ -298,7 +420,9 @@ const runHeuristicAnalysis = (entries: ParsedLogEntry[]): AnalysisResult[] => {
   return results.sort((a, b) => b.riskScore - a.riskScore);
 };
 
-export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilterClick }: TreeViewProps) {
+export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilterClick, onNavigateToSecurity }: TreeViewProps) {
+  const { isDarkMode } = useTheme();
+  const { setPrefilledRule } = useProtectionRule();
   const [aggregatedSessions, setAggregatedSessions] = useState<AggregatedSession[]>([]);
   const [selectedSession, setSelectedSession] = useState<AggregatedSession | null>(null);
   const [expandedEntries, setExpandedEntries] = useState<Set<string>>(new Set());
@@ -319,7 +443,8 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
       'AG-UI': true,
       'FILE': true,
       'EXEC': true,
-      'OPENCLAW': true
+      'OPENCLAW': true,
+      'UNKNOWN': true
     },
     riskLevels: {
       'HIGH': true,
@@ -498,10 +623,30 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
         return `执行命令 ${execCmd}，路径: ${execPath}，参数数量: ${argc} ${execRiskDesc}`;
       
       case 'OPENCLAW':
+        // 解析OPENCLAW的payload，提取method信息
+        const openclawMethods = parseOpenClawMethods(entry.parsedReqPayload || '');
         const openclawRiskLevel = entry.llmProvider || '未知';
         const openclawRiskDesc = openclawRiskLevel === 'HIGH' ? '（高风险）' : openclawRiskLevel === 'MEDIUM' ? '（中风险）' : openclawRiskLevel === 'LOW' ? '（低风险）' : '';
-        const openclawCmd = entry.parsedQuery || entry.query || '未知操作';
-        return `OpenClaw 用户提问: ${openclawCmd} ${openclawRiskDesc}`;
+        
+        if (openclawMethods.length > 0) {
+          // 根据method类型生成更友好的描述
+          const method = openclawMethods[0];
+          if (method === 'node.list') {
+            return `OpenClaw 节点列表查询 ${openclawRiskDesc}`;
+          } else if (method === 'chat.history') {
+            return `OpenClaw 聊天历史查询 ${openclawRiskDesc}`;
+          } else if (method.startsWith('node.')) {
+            return `OpenClaw 节点操作: ${method.substring(5)} ${openclawRiskDesc}`;
+          } else if (method.startsWith('chat.')) {
+            return `OpenClaw 聊天操作: ${method.substring(5)} ${openclawRiskDesc}`;
+          } else {
+            return `OpenClaw ${method} ${openclawRiskDesc}`;
+          }
+        }
+        
+        // 如果没有method，显示查询内容
+        const openclawCmd = entry.parsedQuery || entry.query || '系统操作';
+        return `OpenClaw ${openclawCmd} ${openclawRiskDesc}`;
       
       case 'HTTP':
         // HTTP请求：从源IP:端口向目标IP:端口发起了HTTP请求
@@ -510,21 +655,58 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
       case 'LLM':
         // LLM请求：使用llmModel处理了请求，包含查询和回答节选
         const llmModel = entry.llmModel || entry.ModelName || '未知模型';
-        const llmTokenInfo = entry.llmTokenTotal && parseInt(entry.llmTokenTotal) > 0 
-          ? `，消耗了 ${entry.llmTokenTotal} 个LLM token` 
-          : entry.tokenTotal && parseInt(entry.tokenTotal) > 0 
-          ? `，消耗了 ${entry.tokenTotal} 个token` 
-          : '';
+        
+        // 解析VLLM response，提取关键信息
+        const vllmNatInfo = parseVLLMResponse(entry.parsedRspPayload || '');
+        
+        // 构建描述
+        let llmDesc = `使用 ${llmModel}`;
+        
+        // 如果有tool_calls，显示工具调用信息
+        if (vllmNatInfo.toolCalls && vllmNatInfo.toolCalls.length > 0) {
+          const toolNames = vllmNatInfo.toolCalls.map(tc => tc.name).filter(Boolean);
+          if (toolNames.length > 0) {
+            llmDesc += ` 调用工具: ${toolNames.join(', ')}`;
+          }
+        } else if (vllmNatInfo.hasContent) {
+          llmDesc += ` 生成对话响应`;
+        } else {
+          llmDesc += ` 处理了请求`;
+        }
+        
+        // 添加usage信息
+        if (vllmNatInfo.usage) {
+          llmDesc += `，消耗了 ${vllmNatInfo.usage.total_tokens} 个token`;
+        } else {
+          const llmTokenInfo = entry.llmTokenTotal && parseInt(entry.llmTokenTotal) > 0 
+            ? `，消耗了 ${entry.llmTokenTotal} 个LLM token` 
+            : entry.tokenTotal && parseInt(entry.tokenTotal) > 0 
+            ? `，消耗了 ${entry.tokenTotal} 个token` 
+            : '';
+          llmDesc += llmTokenInfo;
+        }
+        
+        // 添加finish_reason
+        if (vllmNatInfo.finishReason) {
+          const reasonMap: Record<string, string> = {
+            'tool_calls': '（工具调用）',
+            'stop': '（正常结束）',
+            'length': '（达到长度限制）'
+          };
+          llmDesc += reasonMap[vllmNatInfo.finishReason] || '';
+        }
         
         // 添加Query节选
         const llmQuery = entry.llmQuery;
         const queryInfo = llmQuery ? `，查询：${llmQuery.length > 20 ? llmQuery.substring(0, 20) + '...' : llmQuery}` : '';
+        llmDesc += queryInfo;
         
         // 添加Answer节选
         const llmAnswer = entry.llmAnswer;
         const answerInfo = llmAnswer ? `，回答：${llmAnswer.length > 20 ? llmAnswer.substring(0, 20) + '...' : llmAnswer}` : '';
+        llmDesc += answerInfo;
         
-        return `使用 ${llmModel} 处理了请求${llmTokenInfo}${queryInfo}${answerInfo}`;
+        return llmDesc;
       
       case 'AGENT':
         // AGENT请求：Agent名称执行了操作，工作流状态
@@ -606,6 +788,174 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
     });
   };
 
+  const extractRuleDataFromEntry = (entry: ParsedLogEntry): PrefilledRuleData | null => {
+    const sourceType = entry.dataType as PrefilledRuleData['sourceType'];
+    let pattern = '';
+    let description = '';
+    let type: 'block' | 'confirm' | 'warn' = 'warn';
+    
+    if (entry.dataType === 'FILE' || entry.dataType === 'EXEC') {
+      type = entry.llmProvider === 'HIGH' ? 'block' : entry.llmProvider === 'MEDIUM' ? 'confirm' : 'warn';
+    }
+
+    switch (entry.dataType) {
+      case 'OPENCLAW':
+      case 'LLM':
+        pattern = entry.parsedQuery || entry.llmQuery || decodeBase64(entry.query) || '';
+        if (!pattern) {
+          pattern = entry.parsedAnswer || entry.llmAnswer || decodeBase64(entry.answer) || '';
+        }
+        if (!pattern) {
+          const methods = parseOpenClawMethods(entry.parsedReqPayload || entry.reqPayload || '');
+          if (methods.length > 0) {
+            pattern = methods[0];
+          }
+        }
+        if (!pattern && entry.ModelName) {
+          pattern = entry.ModelName;
+        }
+        if (!pattern && entry.llmModel) {
+          pattern = entry.llmModel;
+        }
+        if (!pattern) {
+          pattern = `${entry.dataType} Request`;
+        }
+        description = `OpenClaw/LLM 请求防护 - ${pattern.substring(0, 50)}${pattern.length > 50 ? '...' : ''}`;
+        break;
+      
+      case 'EXEC':
+        pattern = entry.parsedQuery || entry.query || '';
+        if (!pattern && entry.pName) {
+          pattern = entry.pName;
+        }
+        if (!pattern) {
+          pattern = 'Command Execution';
+        }
+        description = `命令执行防护 - ${entry.pName || '未知进程'}: ${pattern.substring(0, 30)}${pattern.length > 30 ? '...' : ''}`;
+        break;
+      
+      case 'FILE':
+        pattern = decodeBase64(entry.answer) || '';
+        if (!pattern && entry.pName) {
+          pattern = entry.pName;
+        }
+        if (!pattern) {
+          pattern = 'File Operation';
+        }
+        description = `文件访问防护 - ${entry.pName || '未知进程'}: ${pattern.substring(0, 30)}${pattern.length > 30 ? '...' : ''}`;
+        break;
+      
+      case 'HTTP':
+        pattern = entry.parsedQuery || entry.query || `${entry.reqIp}:${entry.reqPort}`;
+        if (!pattern) {
+          pattern = 'HTTP Request';
+        }
+        description = `HTTP 请求防护 - ${pattern.substring(0, 50)}${pattern.length > 50 ? '...' : ''}`;
+        break;
+      
+      case 'AGENT':
+        pattern = entry.agentName || entry.agentID || '';
+        if (entry.toolName) {
+          pattern = entry.toolName;
+        }
+        if (!pattern) {
+          pattern = 'Agent Operation';
+        }
+        description = `Agent 操作防护 - ${pattern}`;
+        break;
+      
+      case 'RAG':
+        pattern = entry.ragDocument || '';
+        if (!pattern) {
+          pattern = 'RAG Document';
+        }
+        description = `RAG 文档防护 - ${pattern.substring(0, 50)}${pattern.length > 50 ? '...' : ''}`;
+        break;
+      
+      case 'MCP':
+        pattern = entry.mcpMethod || entry.mcpToolName || '';
+        if (!pattern) {
+          pattern = 'MCP Tool';
+        }
+        description = `MCP 工具防护 - ${pattern}`;
+        break;
+      
+      case 'AG-UI':
+        pattern = entry.parsedQuery || entry.query || '';
+        if (!pattern && entry.ModelName) {
+          pattern = entry.ModelName;
+        }
+        if (!pattern) {
+          pattern = 'AG-UI Interaction';
+        }
+        description = `AG-UI 交互防护 - ${pattern.substring(0, 50)}${pattern.length > 50 ? '...' : ''}`;
+        break;
+      
+      default:
+        pattern = entry.parsedQuery || entry.query || '';
+        if (!pattern) {
+          pattern = `${entry.dataType} Request`;
+        }
+        description = `通用防护规则 - ${pattern.substring(0, 50)}${pattern.length > 50 ? '...' : ''}`;
+    }
+
+    return {
+      pattern,
+      description,
+      type,
+      sourceType,
+      sourceInfo: {
+        logId: entry.logID,
+        processName: entry.pName,
+        timestamp: entry.collectTime,
+      },
+    };
+  };
+
+  const handleCreateProtectionRule = (entry: ParsedLogEntry, ruleType: 'block' | 'confirm' | 'warn') => {
+    const baseRuleData = extractRuleDataFromEntry(entry);
+    if (baseRuleData) {
+      const ruleData = {
+        ...baseRuleData,
+        type: ruleType,
+      };
+      setPrefilledRule(ruleData);
+      if (onNavigateToSecurity) {
+        onNavigateToSecurity();
+      }
+    }
+  };
+
+  const ruleTypeButtons = [
+    { 
+      type: 'block' as const, 
+      label: '拦截', 
+      subLabel: 'Block',
+      icon: ShieldX, 
+      color: 'red',
+      gradient: 'from-red-500 to-rose-600',
+      description: '直接阻止请求',
+    },
+    { 
+      type: 'confirm' as const, 
+      label: '确认', 
+      subLabel: 'Confirm',
+      icon: ShieldQuestion, 
+      color: 'orange',
+      gradient: 'from-orange-500 to-amber-600',
+      description: '需用户确认',
+    },
+    { 
+      type: 'warn' as const, 
+      label: '警告', 
+      subLabel: 'Warn',
+      icon: ShieldAlert, 
+      color: 'yellow',
+      gradient: 'from-yellow-500 to-amber-600',
+      description: '记录并警告',
+    },
+  ];
+
 
 
   // 渲染单个日志条目（左右布局）
@@ -644,6 +994,30 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
           break;
         case 'LLM':
         case 'AGENT':
+          // 解析VLLM response，提取关键信息
+          const vllmTitleInfo = parseVLLMResponse(entry.parsedRspPayload || '');
+          
+          // 如果有tool_calls，显示工具调用信息
+          if (vllmTitleInfo.toolCalls && vllmTitleInfo.toolCalls.length > 0) {
+            const toolNames = vllmTitleInfo.toolCalls.map(tc => tc.name).filter(Boolean);
+            if (toolNames.length > 0) {
+              const modelName = entry.ModelName || entry.llmModel || 'LLM';
+              return `${modelName} 调用工具: ${toolNames.join(', ')}`;
+            }
+          }
+          
+          // 如果有finish_reason为tool_calls，说明是工具调用
+          if (vllmTitleInfo.finishReason === 'tool_calls') {
+            const modelName = entry.ModelName || entry.llmModel || 'LLM';
+            return `${modelName} 工具调用`;
+          }
+          
+          // 如果有content，说明是普通对话
+          if (vllmTitleInfo.hasContent) {
+            const modelName = entry.ModelName || entry.llmModel || 'LLM';
+            return `${modelName} 对话响应`;
+          }
+          
           // 显示模型名称
           if (entry.ModelName) {
             return `${entry.ModelName} Request`;
@@ -729,13 +1103,29 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
           }
           return 'Command Execution';
         case 'OPENCLAW':
+          // 解析OPENCLAW的payload，提取method信息
+          const titleMethods = parseOpenClawMethods(parsedReqPayload);
+          if (titleMethods.length > 0) {
+            const method = titleMethods[0];
+            if (method === 'node.list') {
+              return 'OpenClaw 节点列表查询';
+            } else if (method === 'chat.history') {
+              return 'OpenClaw 聊天历史查询';
+            } else if (method.startsWith('node.')) {
+              return `OpenClaw 节点操作: ${method.substring(5)}`;
+            } else if (method.startsWith('chat.')) {
+              return `OpenClaw 聊天操作: ${method.substring(5)}`;
+            } else {
+              return `OpenClaw ${method}`;
+            }
+          }
           if (parsedQuery) {
             return parsedQuery.length > 100 ? parsedQuery.substring(0, 100) + '...' : parsedQuery;
           }
           if (entry.query) {
             return entry.query.length > 100 ? entry.query.substring(0, 100) + '...' : entry.query;
           }
-          return 'OpenClaw Operation';
+          return 'OpenClaw 系统操作';
       }
 
       // 其他类型优先显示用户查询
@@ -749,78 +1139,74 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
 
     return (
       <div key={entry.logID || index} id={`log-entry-${entry.logID || index}`} className="flex items-center gap-3">
-        {/* 左侧时间线区域 - 缩小宽度 */}
+        {/* 左侧时间线区域 */}
         <div className="relative flex flex-col items-center w-16">
-          {/* 时间线节点 - 缩小尺寸 */}
-          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs shadow-sm transition-all duration-200 ${isExpanded ? 'scale-110' : ''}`} style={{ backgroundColor: getDataTypeColor(entry.dataType) }}>
+          {/* 时间线节点 */}
+          <motion.div 
+            className={`w-5 h-5 rounded-full flex items-center justify-center text-xs shadow-lg transition-all duration-200 ${isExpanded ? 'scale-125' : ''}`}
+            style={{ 
+              backgroundColor: getDataTypeColor(entry.dataType),
+              boxShadow: `0 2px 8px ${getDataTypeColor(entry.dataType)}40`
+            }}
+            whileHover={{ scale: 1.2 }}
+          >
             {getDataTypeIcon(entry.dataType)}
-          </div>
+          </motion.div>
 
           {/* 时间线连接线 */}
           {index < (selectedSession?.allEntries.length || 0) - 1 && (
-            <div className="w-0.5 h-full bg-gradient-to-b from-[var(--border-color)]/80 via-[var(--border-color)]/50 to-[var(--border-color)]/20 absolute top-5 left-1/2 transform -translate-x-1/2" style={{ height: 'calc(100% + 12px)' }} />
+            <div className={`w-0.5 h-full absolute top-5 left-1/2 transform -translate-x-1/2 ${isDarkMode ? 'bg-gradient-to-b from-gray-600/80 via-gray-700/50 to-gray-800/20' : 'bg-gradient-to-b from-gray-300/80 via-gray-200/50 to-gray-100/20'}`} style={{ height: 'calc(100% + 12px)' }} />
           )}
 
-          {/* 时间标注 - 缩小字体 */}
-          <div className="mt-0.5 text-[9px] font-medium text-[var(--text-secondary)] whitespace-nowrap">
+          {/* 时间标注 */}
+          <div className={`mt-0.5 text-[9px] font-medium whitespace-nowrap ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>
             {formatTime(entry.sessionCreatedAt || entry.collectTime || '')}
           </div>
         </div>
 
-        {/* 右侧卡片区域 - 减少内边距和外边距 */}
+        {/* 右侧卡片区域 */}
         <motion.div
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.3, delay: index * 0.02, ease: "easeOut" }}
-          className="flex-1 rounded-xl bg-[var(--card-background)] border border-[var(--border-color)] overflow-hidden hover:shadow-sm transition-all duration-300"
+          className={`flex-1 rounded-xl overflow-hidden transition-all duration-300 backdrop-blur-xl border ${
+            isDarkMode 
+              ? 'bg-gray-800/40 border-gray-700/50 hover:border-blue-500/30' 
+              : 'bg-white/60 border-gray-200/50 hover:border-blue-300'
+          }`}
+          style={{ boxShadow: isExpanded ? '0 4px 20px rgba(59, 130, 246, 0.15)' : 'none' }}
         >
           <div
-            className="p-2.5 cursor-pointer"
+            className="p-3 cursor-pointer"
             onClick={() => toggleEntry(entry.logID || '')}
           >
             <div className="flex items-start gap-2">
               <div className="flex-1 min-w-0">
-                {/* 合并第一行和第二行：标题、类型、话单ID - Apple官网风格 */}
-                    <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-                      <span className="font-semibold px-1.5 py-0.5 rounded-full text-[11px] whitespace-nowrap" style={{ backgroundColor: `${getDataTypeColor(entry.dataType)}33`, color: getDataTypeColor(entry.dataType) }}>
-                        {highlightKeyword(entry.dataType, searchKeyword)}
-                      </span>
-                      <h4 className="text-xs font-semibold text-[var(--foreground)] truncate flex-1 leading-tight">
-                        {/* 标题根据模式显示不同内容 */}
-                        {highlightKeyword(isNaturalLanguageMode ? generateNaturalLanguageDescription(entry) : displayTitle, searchKeyword)}
-                      </h4>
-                      <span className="text-[var(--text-secondary)] text-[11px] truncate whitespace-nowrap ml-1">
-                        {highlightKeyword(entry.logID || entry.id, searchKeyword)}
-                      </span>
-                    </div>
+                {/* 标题行 */}
+                <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                  <span className="font-semibold px-2 py-0.5 rounded-full text-[10px] whitespace-nowrap" style={{ backgroundColor: `${getDataTypeColor(entry.dataType)}25`, color: getDataTypeColor(entry.dataType) }}>
+                    {highlightKeyword(entry.dataType, searchKeyword)}
+                  </span>
+                  <h4 className={`text-xs font-semibold truncate flex-1 leading-tight ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+                    {highlightKeyword(isNaturalLanguageMode ? generateNaturalLanguageDescription(entry) : displayTitle, searchKeyword)}
+                  </h4>
+                  <CopyableLogId id={entry.logID || entry.id} className="ml-1" textClassName={`text-[10px] ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`} />
+                </div>
 
-                {/* 增强的缩略内容 - 根据模式显示不同内容 */}
-                <div className="flex flex-wrap items-center gap-1.5 text-[11px] leading-tight">
-                  {/* 计算显示内容 */}
+                {/* 缩略内容 */}
+                <div className="flex flex-wrap items-center gap-1.5 text-[10px] leading-tight">
                   {(() => {
                     if (isNaturalLanguageMode) {
-                      // 自然语言模式 - 副标题显示详细字段
                       return (
-                        <div className="flex flex-wrap items-center gap-1.5 text-[var(--text-secondary)] leading-tight">
-                          {/* FILE类型日志只显示相关信息 */}
+                        <div className={`flex flex-wrap items-center gap-1.5 leading-tight ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                           {entry.dataType === 'FILE' ? (
                             <>
-                              {entry.pid && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">PID:</span>
-                                  <span>{highlightKeyword(entry.pid, searchKeyword)}</span>
-                                </div>
-                              )}
-                              {entry.pName && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">进程:</span>
-                                  <span>{highlightKeyword(entry.pName, searchKeyword)}</span>
-                                </div>
-                              )}
+                              {entry.pid && <div className="flex items-center gap-1"><span className="font-medium">PID:</span><span>{highlightKeyword(entry.pid, searchKeyword)}</span></div>}
+                              {entry.pName && <div className="flex items-center gap-1"><span className="font-medium">进程:</span><span>{highlightKeyword(entry.pName, searchKeyword)}</span></div>}
                               {entry.llmProvider && (
                                 <div className="flex items-center gap-1">
                                   <span className="font-medium">风险:</span>
-                                  <span className={`px-1 py-0.5 rounded-full text-[10px] ${entry.llmProvider === 'HIGH' ? 'bg-red-100 text-red-800' : entry.llmProvider === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' : entry.llmProvider === 'LOW' ? 'bg-green-100 text-green-800' : entry.llmProvider === 'INFO' ? 'bg-blue-100 text-blue-800' : ''}`}>
+                                  <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-medium ${entry.llmProvider === 'HIGH' ? 'bg-red-500/20 text-red-400' : entry.llmProvider === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' : entry.llmProvider === 'LOW' ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'}`}>
                                     {highlightKeyword(entry.llmProvider, searchKeyword)}
                                   </span>
                                 </div>
@@ -828,222 +1214,50 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
                             </>
                           ) : entry.dataType === 'EXEC' ? (
                             <>
-                              {entry.pid && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">PID:</span>
-                                  <span>{highlightKeyword(entry.pid, searchKeyword)}</span>
-                                </div>
-                              )}
-                              {entry.pName && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">进程:</span>
-                                  <span>{highlightKeyword(entry.pName, searchKeyword)}</span>
-                                </div>
-                              )}
+                              {entry.pid && <div className="flex items-center gap-1"><span className="font-medium">PID:</span><span>{highlightKeyword(entry.pid, searchKeyword)}</span></div>}
+                              {entry.pName && <div className="flex items-center gap-1"><span className="font-medium">进程:</span><span>{highlightKeyword(entry.pName, searchKeyword)}</span></div>}
                               {entry.llmProvider && (
                                 <div className="flex items-center gap-1">
                                   <span className="font-medium">风险:</span>
-                                  <span className={`px-1 py-0.5 rounded-full text-[10px] ${entry.llmProvider === 'HIGH' ? 'bg-red-100 text-red-800' : entry.llmProvider === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' : entry.llmProvider === 'LOW' ? 'bg-green-100 text-green-800' : entry.llmProvider === 'INFO' ? 'bg-blue-100 text-blue-800' : ''}`}>
+                                  <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-medium ${entry.llmProvider === 'HIGH' ? 'bg-red-500/20 text-red-400' : entry.llmProvider === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' : entry.llmProvider === 'LOW' ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'}`}>
                                     {highlightKeyword(entry.llmProvider, searchKeyword)}
                                   </span>
                                 </div>
                               )}
-                              {entry.tokenTotal && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">参数:</span>
-                                  <span>{highlightKeyword(entry.tokenTotal, searchKeyword)}</span>
-                                </div>
-                              )}
+                              {entry.tokenTotal && <div className="flex items-center gap-1"><span className="font-medium">参数:</span><span>{highlightKeyword(entry.tokenTotal, searchKeyword)}</span></div>}
                             </>
                           ) : (
                             <>
-                              {/* 请求IP和端口 */}
-                              {entry.reqIp && entry.reqPort && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">请求:</span>
-                                  <span>{highlightKeyword(`${entry.reqIp}:${entry.reqPort}`, searchKeyword)}</span>
-                                </div>
-                              )}
-
-                              {/* 响应IP和端口 */}
-                              {entry.respIp && entry.respPort && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">响应:</span>
-                                  <span>{highlightKeyword(`${entry.respIp}:${entry.respPort}`, searchKeyword)}</span>
-                                </div>
-                              )}
-
-                              {/* 进程信息 */}
-                              {entry.pid && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">PID:</span>
-                                  <span>{highlightKeyword(entry.pid, searchKeyword)}</span>
-                                </div>
-                              )}
-                              {entry.pName && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">进程:</span>
-                                  <span>{highlightKeyword(entry.pName, searchKeyword)}</span>
-                                </div>
-                              )}
-
-                              {/* Token信息 */}
+                              {entry.reqIp && entry.reqPort && <div className="flex items-center gap-1"><span className="font-medium">请求:</span><span>{highlightKeyword(`${entry.reqIp}:${entry.reqPort}`, searchKeyword)}</span></div>}
+                              {entry.respIp && entry.respPort && <div className="flex items-center gap-1"><span className="font-medium">响应:</span><span>{highlightKeyword(`${entry.respIp}:${entry.respPort}`, searchKeyword)}</span></div>}
+                              {entry.pid && <div className="flex items-center gap-1"><span className="font-medium">PID:</span><span>{highlightKeyword(entry.pid, searchKeyword)}</span></div>}
+                              {entry.pName && <div className="flex items-center gap-1"><span className="font-medium">进程:</span><span>{highlightKeyword(entry.pName, searchKeyword)}</span></div>}
                               {entry.tokenTotal && parseInt(entry.tokenTotal) > 0 && (
                                 <div className="flex items-center gap-1">
                                   <Activity className="w-3 h-3" />
                                   <span>{highlightKeyword(entry.tokenTotal, searchKeyword)} tokens</span>
                                 </div>
                               )}
-
-                              {/* 模型名称 */}
                               {entry.ModelName && (
-                                <div className="flex items-center gap-1">
-                                  <span className="text-[11px] font-medium px-1 py-0.5 rounded-full bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]">
-                                    {highlightKeyword(entry.ModelName, searchKeyword)}
-                                  </span>
-                                </div>
-                              )}
-                              
-                              {/* AG-UI特定信息 */}
-                              {entry.dataType === 'AG-UI' && (
-                                <>
-                                  {/* 工作流状态 */}
-                                  {entry.workflowStatus && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">工作流:</span>
-                                      <span>{highlightKeyword(entry.workflowStatus, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* 工作流步骤 */}
-                                  {entry.workflowTotalSteps && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">步骤:</span>
-                                      <span>{highlightKeyword(entry.workflowTotalSteps, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                              
-                              {/* MCP特定信息 */}
-                              {entry.dataType === 'MCP' && (
-                                <>
-                                  {/* 工具名称 */}
-                                  {entry.mcpToolName && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">工具:</span>
-                                      <span>{highlightKeyword(entry.mcpToolName, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* 服务器名称 */}
-                                  {entry.mcpServerName && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">服务器:</span>
-                                      <span>{highlightKeyword(entry.mcpServerName, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                              
-                              {/* LLM特定信息 */}
-                              {entry.dataType === 'LLM' && (
-                                <>
-                                  {/* LLM模型 */}
-                                  {entry.llmModel && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-[11px] font-medium px-1 py-0.5 rounded-full bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]">
-                                        {highlightKeyword(entry.llmModel, searchKeyword)}
-                                      </span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* LLM轮数 */}
-                                  {entry.llmRound && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">轮数:</span>
-                                      <span>{highlightKeyword(entry.llmRound, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* LLM Token信息 */}
-                                  {entry.llmTokenTotal && parseInt(entry.llmTokenTotal) > 0 && (
-                                    <div className="flex items-center gap-1">
-                                      <Activity className="w-3 h-3" />
-                                      <span>{highlightKeyword(entry.llmTokenTotal, searchKeyword)} LLM tokens</span>
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                              
-                              {/* AG-UI特定信息 */}
-                              {entry.dataType === 'AG-UI' && (
-                                <>
-                                  {/* 工作流状态 */}
-                                  {entry.workflowStatus && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">工作流:</span>
-                                      <span>{highlightKeyword(entry.workflowStatus, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* 工作流步骤 */}
-                                  {entry.workflowTotalSteps && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">步骤:</span>
-                                      <span>{highlightKeyword(entry.workflowTotalSteps, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                              
-                              {/* MCP特定信息 */}
-                              {entry.dataType === 'MCP' && (
-                                <>
-                                  {/* 工具名称 */}
-                                  {entry.mcpToolName && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">工具:</span>
-                                      <span>{highlightKeyword(entry.mcpToolName, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* 服务器名称 */}
-                                  {entry.mcpServerName && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">服务器:</span>
-                                      <span>{highlightKeyword(entry.mcpServerName, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                </>
+                                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400">
+                                  {highlightKeyword(entry.ModelName, searchKeyword)}
+                                </span>
                               )}
                             </>
                           )}
                         </div>
                       );
                     } else {
-                      // 原始字段模式 - 保持原有显示
                       return (
-                        <div className="flex flex-wrap items-center gap-1.5 text-[var(--text-secondary)] leading-tight">
-                          {/* FILE类型日志只显示相关信息 */}
+                        <div className={`flex flex-wrap items-center gap-1.5 leading-tight ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                           {entry.dataType === 'FILE' ? (
                             <>
-                              {entry.pid && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">PID:</span>
-                                  <span>{highlightKeyword(entry.pid, searchKeyword)}</span>
-                                </div>
-                              )}
-                              {entry.pName && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">进程:</span>
-                                  <span>{highlightKeyword(entry.pName, searchKeyword)}</span>
-                                </div>
-                              )}
+                              {entry.pid && <div className="flex items-center gap-1"><span className="font-medium">PID:</span><span>{highlightKeyword(entry.pid, searchKeyword)}</span></div>}
+                              {entry.pName && <div className="flex items-center gap-1"><span className="font-medium">进程:</span><span>{highlightKeyword(entry.pName, searchKeyword)}</span></div>}
                               {entry.llmProvider && (
                                 <div className="flex items-center gap-1">
                                   <span className="font-medium">风险:</span>
-                                  <span className={`px-1 py-0.5 rounded-full text-[10px] ${entry.llmProvider === 'HIGH' ? 'bg-red-100 text-red-800' : entry.llmProvider === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' : entry.llmProvider === 'LOW' ? 'bg-green-100 text-green-800' : entry.llmProvider === 'INFO' ? 'bg-blue-100 text-blue-800' : ''}`}>
+                                  <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-medium ${entry.llmProvider === 'HIGH' ? 'bg-red-500/20 text-red-400' : entry.llmProvider === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' : entry.llmProvider === 'LOW' ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'}`}>
                                     {highlightKeyword(entry.llmProvider, searchKeyword)}
                                   </span>
                                 </div>
@@ -1051,152 +1265,34 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
                             </>
                           ) : entry.dataType === 'EXEC' ? (
                             <>
-                              {entry.pid && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">PID:</span>
-                                  <span>{highlightKeyword(entry.pid, searchKeyword)}</span>
-                                </div>
-                              )}
-                              {entry.pName && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">进程:</span>
-                                  <span>{highlightKeyword(entry.pName, searchKeyword)}</span>
-                                </div>
-                              )}
+                              {entry.pid && <div className="flex items-center gap-1"><span className="font-medium">PID:</span><span>{highlightKeyword(entry.pid, searchKeyword)}</span></div>}
+                              {entry.pName && <div className="flex items-center gap-1"><span className="font-medium">进程:</span><span>{highlightKeyword(entry.pName, searchKeyword)}</span></div>}
                               {entry.llmProvider && (
                                 <div className="flex items-center gap-1">
                                   <span className="font-medium">风险:</span>
-                                  <span className={`px-1 py-0.5 rounded-full text-[10px] ${entry.llmProvider === 'HIGH' ? 'bg-red-100 text-red-800' : entry.llmProvider === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' : entry.llmProvider === 'LOW' ? 'bg-green-100 text-green-800' : entry.llmProvider === 'INFO' ? 'bg-blue-100 text-blue-800' : ''}`}>
+                                  <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-medium ${entry.llmProvider === 'HIGH' ? 'bg-red-500/20 text-red-400' : entry.llmProvider === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' : entry.llmProvider === 'LOW' ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'}`}>
                                     {highlightKeyword(entry.llmProvider, searchKeyword)}
                                   </span>
                                 </div>
                               )}
-                              {entry.tokenTotal && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">参数:</span>
-                                  <span>{highlightKeyword(entry.tokenTotal, searchKeyword)}</span>
-                                </div>
-                              )}
+                              {entry.tokenTotal && <div className="flex items-center gap-1"><span className="font-medium">参数:</span><span>{highlightKeyword(entry.tokenTotal, searchKeyword)}</span></div>}
                             </>
                           ) : (
                             <>
-                              {/* 请求IP和端口 */}
-                              {entry.reqIp && entry.reqPort && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">请求:</span>
-                                  <span>{highlightKeyword(`${entry.reqIp}:${entry.reqPort}`, searchKeyword)}</span>
-                                </div>
-                              )}
-
-                              {/* 响应IP和端口 */}
-                              {entry.respIp && entry.respPort && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">响应:</span>
-                                  <span>{highlightKeyword(`${entry.respIp}:${entry.respPort}`, searchKeyword)}</span>
-                                </div>
-                              )}
-
-                              {/* 进程信息 */}
-                              {entry.pid && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">PID:</span>
-                                  <span>{highlightKeyword(entry.pid, searchKeyword)}</span>
-                                </div>
-                              )}
-                              {entry.pName && (
-                                <div className="flex items-center gap-1">
-                                  <span className="font-medium">进程:</span>
-                                  <span>{highlightKeyword(entry.pName, searchKeyword)}</span>
-                                </div>
-                              )}
-
-                              {/* Token信息 */}
+                              {entry.reqIp && entry.reqPort && <div className="flex items-center gap-1"><span className="font-medium">请求:</span><span>{highlightKeyword(`${entry.reqIp}:${entry.reqPort}`, searchKeyword)}</span></div>}
+                              {entry.respIp && entry.respPort && <div className="flex items-center gap-1"><span className="font-medium">响应:</span><span>{highlightKeyword(`${entry.respIp}:${entry.respPort}`, searchKeyword)}</span></div>}
+                              {entry.pid && <div className="flex items-center gap-1"><span className="font-medium">PID:</span><span>{highlightKeyword(entry.pid, searchKeyword)}</span></div>}
+                              {entry.pName && <div className="flex items-center gap-1"><span className="font-medium">进程:</span><span>{highlightKeyword(entry.pName, searchKeyword)}</span></div>}
                               {entry.tokenTotal && parseInt(entry.tokenTotal) > 0 && (
                                 <div className="flex items-center gap-1">
                                   <Activity className="w-3 h-3" />
                                   <span>{highlightKeyword(entry.tokenTotal, searchKeyword)} tokens</span>
                                 </div>
                               )}
-
-                              {/* 模型名称 */}
                               {entry.ModelName && (
-                                <div className="flex items-center gap-1">
-                                  <span className="text-[11px] font-medium px-1 py-0.5 rounded-full bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]">
-                                    {highlightKeyword(entry.ModelName, searchKeyword)}
-                                  </span>
-                                </div>
-                              )}
-                              
-                              {/* LLM特定信息 */}
-                              {entry.dataType === 'LLM' && (
-                                <>
-                                  {/* LLM模型 */}
-                                  {entry.llmModel && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-[11px] font-medium px-1 py-0.5 rounded-full bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]">
-                                        {highlightKeyword(entry.llmModel, searchKeyword)}
-                                      </span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* LLM轮数 */}
-                                  {entry.llmRound && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">轮数:</span>
-                                      <span>{highlightKeyword(entry.llmRound, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* LLM Token信息 */}
-                                  {entry.llmTokenTotal && parseInt(entry.llmTokenTotal) > 0 && (
-                                    <div className="flex items-center gap-1">
-                                      <Activity className="w-3 h-3" />
-                                      <span>{highlightKeyword(entry.llmTokenTotal, searchKeyword)} LLM tokens</span>
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                              
-                              {/* AG-UI特定信息 */}
-                              {entry.dataType === 'AG-UI' && (
-                                <>
-                                  {/* 工作流状态 */}
-                                  {entry.workflowStatus && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">工作流:</span>
-                                      <span>{highlightKeyword(entry.workflowStatus, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* 工作流步骤 */}
-                                  {entry.workflowTotalSteps && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">步骤:</span>
-                                      <span>{highlightKeyword(entry.workflowTotalSteps, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                              
-                              {/* MCP特定信息 */}
-                              {entry.dataType === 'MCP' && (
-                                <>
-                                  {/* 工具名称 */}
-                                  {entry.mcpToolName && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">工具:</span>
-                                      <span>{highlightKeyword(entry.mcpToolName, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* 服务器名称 */}
-                                  {entry.mcpServerName && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="font-medium">服务器:</span>
-                                      <span>{highlightKeyword(entry.mcpServerName, searchKeyword)}</span>
-                                    </div>
-                                  )}
-                                </>
+                                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400">
+                                  {highlightKeyword(entry.ModelName, searchKeyword)}
+                                </span>
                               )}
                             </>
                           )}
@@ -1207,74 +1303,77 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
                 </div>
               </div>
 
-              {/* 展开/收起按钮 - 缩小尺寸 */}
-              <button className="p-1 hover:bg-[var(--border-color)]/20 rounded-lg transition-all duration-200 flex-shrink-0">
-                {isExpanded ? (
-                  <ChevronUp className="w-3.5 h-3.5 text-[var(--accent-blue)] transition-transform duration-200" />
-                ) : (
-                  <ChevronDown className="w-3.5 h-3.5 text-[var(--text-secondary)] transition-transform duration-200" />
-                )}
-              </button>
+              {/* 展开箭头 */}
+              <motion.div
+                animate={{ rotate: isExpanded ? 180 : 0 }}
+                transition={{ duration: 0.2 }}
+                className={isDarkMode ? 'text-gray-500' : 'text-gray-400'}
+              >
+                <ChevronDown className="w-4 h-4" />
+              </motion.div>
             </div>
           </div>
 
-          {/* 展开的详细信息 - 展示所有实时日志字段 */}
-          {isExpanded && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.3, ease: "easeOut" }}
-              className="border-t border-[var(--border-color)]/50 p-3.5 bg-[var(--background)]/50"
-            >
-              {/* 详情内容 - 统一对齐和字体 */}
-              <div className="space-y-4">
-                {/* FILE类型日志只显示相关信息 */}
-                {entry.dataType === 'FILE' ? (
-                  <>
-                    <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
-                      <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">基础信息</h5>
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-[var(--text-secondary)] block">日志ID</label>
-                          <div className="text-[var(--foreground)] font-mono text-xs">{entry.logID || 'N/A'}</div>
+          {/* 展开详情 */}
+          <AnimatePresence>
+            {isExpanded && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className={`overflow-hidden border-t ${isDarkMode ? 'border-gray-700/50' : 'border-gray-200'}`}
+              >
+                {/* 展开的详细信息 - 展示所有实时日志字段 */}
+                <div className={`p-4 ${isDarkMode ? 'bg-gray-900/50' : 'bg-gray-50/50'}`}>
+                  {/* 详情内容 - 统一对齐和字体 */}
+                  <div className="space-y-4">
+                    {/* FILE类型日志只显示相关信息 */}
+                    {entry.dataType === 'FILE' ? (
+                      <>
+                        <div className={`rounded-xl p-3 border shadow-sm ${isDarkMode ? 'bg-gray-800/50 border-gray-700/50' : 'bg-white/50 border-gray-200'}`}>
+                          <h5 className={`text-xs font-semibold mb-2.5 uppercase tracking-wider ${isDarkMode ? 'text-blue-400' : 'text-blue-500'}`}>基础信息</h5>
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                            <div className="space-y-1">
+                              <label className={`text-xs font-medium block ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>日志ID</label>
+                              <div className={`font-mono text-xs ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{entry.logID || 'N/A'}</div>
+                            </div>
+                            <div className="space-y-1">
+                              <label className={`text-xs font-medium block ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>数据类型</label>
+                              <div className={isDarkMode ? 'text-white' : 'text-gray-900'}>{entry.dataType}</div>
+                            </div>
+                            <div className="space-y-1">
+                              <label className={`text-xs font-medium block ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>会话创建时间</label>
+                              <div className={`font-mono text-xs ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{entry.sessionCreatedAt}</div>
+                            </div>
+                            <div className="space-y-1">
+                              <label className={`text-xs font-medium block ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>收集时间</label>
+                              <div className={`font-mono text-xs ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{entry.collectTime}</div>
+                            </div>
+                          </div>
                         </div>
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-[var(--text-secondary)] block">数据类型</label>
-                          <div className="text-[var(--foreground)]">{entry.dataType}</div>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-[var(--text-secondary)] block">会话创建时间</label>
-                          <div className="text-[var(--foreground)] font-mono text-xs">{entry.sessionCreatedAt}</div>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-[var(--text-secondary)] block">收集时间</label>
-                          <div className="text-[var(--foreground)] font-mono text-xs">{entry.collectTime}</div>
-                        </div>
-                      </div>
-                    </div>
 
-                    <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
-                      <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">文件操作详情</h5>
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-[var(--text-secondary)] block">文件敏感风险等级</label>
-                          <span className={`px-2 py-1 rounded-full text-xs ${entry.llmProvider === 'HIGH' ? 'bg-red-100 text-red-800' : entry.llmProvider === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' : entry.llmProvider === 'INFO' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
-                            {entry.llmProvider || 'N/A'}
-                          </span>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-[var(--text-secondary)] block">访问进程名</label>
-                          <div className="text-[var(--foreground)] font-mono">{entry.pName || 'N/A'}</div>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-[var(--text-secondary)] block">进程ID</label>
-                          <div className="text-[var(--foreground)]">{entry.pid || 'N/A'}</div>
-                        </div>
-                        <div className="col-span-1 md:col-span-4 space-y-1">
-                          <label className="text-xs font-medium text-[var(--text-secondary)] block">文件路径</label>
-                          <div className="text-[var(--foreground)] font-mono break-all">{decodeBase64(entry.answer) || 'N/A'}</div>
-                        </div>
+                        <div className={`rounded-xl p-3 border shadow-sm ${isDarkMode ? 'bg-gray-800/50 border-gray-700/50' : 'bg-white/50 border-gray-200'}`}>
+                          <h5 className={`text-xs font-semibold mb-2.5 uppercase tracking-wider ${isDarkMode ? 'text-blue-400' : 'text-blue-500'}`}>文件操作详情</h5>
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                            <div className="space-y-1">
+                              <label className={`text-xs font-medium block ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>文件敏感风险等级</label>
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${entry.llmProvider === 'HIGH' ? 'bg-red-500/20 text-red-400' : entry.llmProvider === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' : entry.llmProvider === 'INFO' ? 'bg-blue-500/20 text-blue-400' : 'bg-green-500/20 text-green-400'}`}>
+                                {entry.llmProvider || 'N/A'}
+                              </span>
+                            </div>
+                            <div className="space-y-1">
+                              <label className={`text-xs font-medium block ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>访问进程名</label>
+                              <div className={`font-mono ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{entry.pName || 'N/A'}</div>
+                            </div>
+                            <div className="space-y-1">
+                              <label className={`text-xs font-medium block ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>进程ID</label>
+                              <div className={isDarkMode ? 'text-white' : 'text-gray-900'}>{entry.pid || 'N/A'}</div>
+                            </div>
+                            <div className="col-span-1 md:col-span-4 space-y-1">
+                              <label className={`text-xs font-medium block ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>文件路径</label>
+                              <div className={`font-mono break-all ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{decodeBase64(entry.answer) || 'N/A'}</div>
+                            </div>
                       </div>
                     </div>
                   </>
@@ -1363,47 +1462,193 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
                           <div className="text-[var(--foreground)] font-mono text-xs">{entry.sessionCreatedAt}</div>
                         </div>
                         <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">会话结束时间</label>
+                          <div className="text-[var(--foreground)] font-mono text-xs">{entry.sessionEndedAt || 'N/A'}</div>
+                        </div>
+                        <div className="space-y-1">
                           <label className="text-xs font-medium text-[var(--text-secondary)] block">收集时间</label>
                           <div className="text-[var(--foreground)] font-mono text-xs">{entry.collectTime}</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
-                      <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">OpenClaw 操作详情</h5>
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-[var(--text-secondary)] block">风险等级</label>
-                          <span className={`px-2 py-1 rounded-full text-xs ${entry.llmProvider === 'HIGH' ? 'bg-red-100 text-red-800' : entry.llmProvider === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' : entry.llmProvider === 'INFO' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
-                            {entry.llmProvider || 'N/A'}
-                          </span>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-[var(--text-secondary)] block">进程名</label>
-                          <div className="text-[var(--foreground)] font-mono">{entry.pName || 'N/A'}</div>
                         </div>
                         <div className="space-y-1">
                           <label className="text-xs font-medium text-[var(--text-secondary)] block">进程ID</label>
                           <div className="text-[var(--foreground)]">{entry.pid || 'N/A'}</div>
                         </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">进程名</label>
+                          <div className="text-[var(--foreground)] font-mono">{entry.pName || 'N/A'}</div>
+                        </div>
                       </div>
                     </div>
 
-                    {(entry.parsedQuery || entry.query) && (
+                    {/* 网络信息 */}
+                    <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
+                      <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">网络信息</h5>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">请求IP:Port</label>
+                          <div className="text-[var(--foreground)] font-mono text-xs">{entry.reqIp}:{entry.reqPort}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">响应IP:Port</label>
+                          <div className="text-[var(--foreground)] font-mono text-xs">{entry.respIp}:{entry.respPort}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 会话信息 */}
+                    {entry.session && (
                       <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
-                        <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">操作内容</h5>
-                        <div className="bg-[var(--background)] p-3 rounded-lg">
-                          <pre className="text-[var(--foreground)] font-mono text-xs whitespace-pre-wrap break-all">{entry.parsedQuery || entry.query}</pre>
+                        <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">会话信息</h5>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block">会话ID</label>
+                            <div className="text-[var(--foreground)] font-mono text-xs">{entry.session || 'N/A'}</div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block">消息ID</label>
+                            <div className="text-[var(--foreground)] font-mono text-xs">{entry.messageID || 'N/A'}</div>
+                          </div>
                         </div>
                       </div>
                     )}
 
-                    {entry.answer && (
+                    {/* Agent信息 */}
+                    {entry.agentID && (
                       <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
-                        <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">执行结果</h5>
-                        <div className="bg-[var(--background)] p-3 rounded-lg">
-                          <pre className="text-[var(--foreground)] font-mono text-xs whitespace-pre-wrap break-all">{decodeBase64(entry.answer)}</pre>
+                        <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">Agent信息</h5>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block">Agent ID</label>
+                            <div className="text-[var(--foreground)] font-mono text-xs">{entry.agentID || 'N/A'}</div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block">Agent名称</label>
+                            <div className="text-[var(--foreground)]">{entry.agentName || 'N/A'}</div>
+                          </div>
                         </div>
+                      </div>
+                    )}
+
+                    {/* LLM相关信息 */}
+                    {(entry.ModelName || entry.llmProvider || entry.llmVersion || entry.llmStream) && (
+                      <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
+                        <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">LLM相关</h5>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block">模型名称</label>
+                            <div className="text-[var(--foreground)]">{entry.ModelName || 'N/A'}</div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block">LLM提供商</label>
+                            <div className="text-[var(--foreground)]">{entry.llmProvider || 'N/A'}</div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block">API版本</label>
+                            <div className="text-[var(--foreground)]">{entry.llmVersion || 'N/A'}</div>
+                          </div>
+                          {entry.dataType === 'OPENCLAW' && (
+                            <div className="space-y-1">
+                              <label className="text-xs font-medium text-[var(--text-secondary)] block">执行结果</label>
+                              <div className="text-[var(--foreground)]">{entry.llmStream === '1' ? '操作失败' : '操作成功'}</div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Token相关信息 */}
+                    {(entry.tokenTotal || entry.tokenPrompt || entry.tokenCompletion) && (
+                      <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
+                        <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">Token信息</h5>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block">总Token</label>
+                            <div className="text-[var(--foreground)]">{entry.tokenTotal || 'N/A'}</div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block">提示词Token</label>
+                            <div className="text-[var(--foreground)]">{entry.tokenPrompt || 'N/A'}</div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block">生成Token</label>
+                            <div className="text-[var(--foreground)]">{entry.tokenCompletion || 'N/A'}</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 工具使用 */}
+                    {entry.toolName && (
+                      <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
+                        <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">工具使用</h5>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block">工具名称</label>
+                            <div className="text-[var(--foreground)]">{entry.toolName}</div>
+                          </div>
+                          {entry.toolInput && (
+                            <div className="col-span-3 space-y-1">
+                              <label className="text-xs font-medium text-[var(--text-secondary)] block">工具输入</label>
+                              <pre className="text-[var(--foreground)] font-mono text-xs bg-[var(--background)] p-2 rounded-lg overflow-x-auto">
+                                {decodeBase64(entry.toolInput)}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 对话内容 */}
+                    {(entry.parsedQuery || entry.query || entry.parsedAnswer || entry.answer || entry.thought) && (
+                      <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
+                        <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">对话内容</h5>
+                        {(entry.parsedQuery || entry.query) && (
+                          <div className="mb-3">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block mb-1">用户提问</label>
+                            <div className="text-[var(--foreground)] bg-[var(--background)] p-2 rounded-lg whitespace-pre-wrap text-xs">
+                              {entry.parsedQuery || decodeBase64(entry.query)}
+                            </div>
+                          </div>
+                        )}
+                        {entry.thought && (
+                          <div className="mb-3">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block mb-1">思考过程</label>
+                            <pre className="text-[var(--foreground)] font-mono text-xs bg-[var(--background)] p-2 rounded-lg overflow-x-auto max-h-40">
+                              {decodeBase64(entry.thought)}
+                            </pre>
+                          </div>
+                        )}
+                        {(entry.parsedAnswer || entry.answer) && (
+                          <div>
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block mb-1">AI回答</label>
+                            <div className="text-[var(--foreground)] bg-[var(--background)] p-2 rounded-lg whitespace-pre-wrap text-xs">
+                              {entry.parsedAnswer || decodeBase64(entry.answer)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Payload信息 */}
+                    {(entry.parsedReqPayload || entry.reqPayload || entry.parsedRspPayload || entry.rspPayload) && (
+                      <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
+                        <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">Payload信息</h5>
+                        {(entry.parsedReqPayload || entry.reqPayload) && (
+                          <div className="mb-3">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block mb-1">请求Payload</label>
+                            <pre className="text-[var(--foreground)] font-mono text-xs bg-[var(--background)] p-2 rounded-lg overflow-x-auto max-h-40">
+                              {entry.parsedReqPayload || decodeBase64(entry.reqPayload)}
+                            </pre>
+                          </div>
+                        )}
+                        {(entry.parsedRspPayload || entry.rspPayload) && (
+                          <div>
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block mb-1">响应Payload</label>
+                            <pre className="text-[var(--foreground)] font-mono text-xs bg-[var(--background)] p-2 rounded-lg overflow-x-auto max-h-40">
+                              {entry.parsedRspPayload || decodeBase64(entry.rspPayload)}
+                            </pre>
+                          </div>
+                        )}
                       </div>
                     )}
                   </>
@@ -1538,10 +1783,12 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
                             <label className="text-xs font-medium text-[var(--text-secondary)] block">LLM ID</label>
                             <div className="text-[var(--foreground)] font-mono text-xs">{entry.llmID || 'N/A'}</div>
                           </div>
-                          <div className="space-y-1">
-                            <label className="text-xs font-medium text-[var(--text-secondary)] block">流式模式</label>
-                            <div className="text-[var(--foreground)]">{entry.llmStream === '1' ? '是' : '否'}</div>
-                          </div>
+                          {entry.dataType === 'OPENCLAW' && (
+                            <div className="space-y-1">
+                              <label className="text-xs font-medium text-[var(--text-secondary)] block">执行结果</label>
+                              <div className="text-[var(--foreground)]">{entry.llmStream === '1' ? '操作失败' : '操作成功'}</div>
+                            </div>
+                          )}
                           <div className="space-y-1">
                             <label className="text-xs font-medium text-[var(--text-secondary)] block">LLM轮数</label>
                             <div className="text-[var(--foreground)]">{entry.llmRound || 'N/A'}</div>
@@ -1775,8 +2022,8 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
                       )}
                       {entry.parsedRspPayload && (
                         <div className="space-y-1">
-                          <label className="text-xs font-medium text-[var(--text-secondary)] block">Response Payload</label>
-                          <pre className="text-[var(--foreground)] font-mono text-xs bg-[var(--background)] p-2.5 rounded-lg overflow-x-auto max-h-70">
+                          <label className={`text-xs font-medium block ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Response Payload</label>
+                          <pre className={`font-mono text-xs p-2.5 rounded-lg overflow-x-auto max-h-70 ${isDarkMode ? 'text-white bg-gray-900/50' : 'text-gray-900 bg-gray-100'}`}>
                             {entry.parsedRspPayload}
                           </pre>
                         </div>
@@ -1784,13 +2031,105 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
                     </div>
                   </>
                 )}
+
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="mt-4 pt-4 border-t border-[var(--border-color)]/30"
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <ShieldPlus className={`w-4 h-4 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`} />
+                      <span className={`text-xs font-semibold ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                        快速创建防护规则
+                      </span>
+                    </div>
+                    <span className={`text-[10px] ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                      选择规则类型
+                    </span>
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-2">
+                    {ruleTypeButtons.map((btn, idx) => {
+                      const IconComponent = btn.icon;
+                      const borderColor = btn.color === 'red' 
+                        ? (isDarkMode ? 'rgba(239, 68, 68, 0.2)' : 'rgba(239, 68, 68, 0.3)')
+                        : btn.color === 'orange' 
+                          ? (isDarkMode ? 'rgba(249, 115, 22, 0.2)' : 'rgba(249, 115, 22, 0.3)')
+                          : (isDarkMode ? 'rgba(234, 179, 8, 0.2)' : 'rgba(234, 179, 8, 0.3)');
+                      const hoverBorderColor = btn.color === 'red' 
+                        ? (isDarkMode ? 'rgba(239, 68, 68, 0.4)' : 'rgba(239, 68, 68, 0.5)')
+                        : btn.color === 'orange' 
+                          ? (isDarkMode ? 'rgba(249, 115, 22, 0.4)' : 'rgba(249, 115, 22, 0.5)')
+                          : (isDarkMode ? 'rgba(234, 179, 8, 0.4)' : 'rgba(234, 179, 8, 0.5)');
+                      const textColor = btn.color === 'red' 
+                        ? (isDarkMode ? '#f87171' : '#dc2626')
+                        : btn.color === 'orange' 
+                          ? (isDarkMode ? '#fb923c' : '#ea580c')
+                          : (isDarkMode ? '#fbbf24' : '#ca8a04');
+                      
+                      return (
+                        <motion.button
+                          key={btn.type}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCreateProtectionRule(entry, btn.type);
+                          }}
+                          className="group relative flex flex-col items-center justify-center gap-1.5 px-3 py-3 rounded-xl font-medium text-xs overflow-hidden transition-all duration-300"
+                          style={{
+                            background: isDarkMode 
+                              ? `linear-gradient(135deg, ${btn.color === 'red' ? 'rgba(239, 68, 68, 0.1)' : btn.color === 'orange' ? 'rgba(249, 115, 22, 0.1)' : 'rgba(234, 179, 8, 0.1)'}, ${btn.color === 'red' ? 'rgba(239, 68, 68, 0.05)' : btn.color === 'orange' ? 'rgba(249, 115, 22, 0.05)' : 'rgba(234, 179, 8, 0.05)'})`
+                              : `linear-gradient(135deg, ${btn.color === 'red' ? 'rgba(239, 68, 68, 0.08)' : btn.color === 'orange' ? 'rgba(249, 115, 22, 0.08)' : 'rgba(234, 179, 8, 0.08)'}, transparent)`,
+                            border: `1px solid ${borderColor}`,
+                          }}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.1 + idx * 0.05 }}
+                          whileHover={{ scale: 1.02, y: -2 }}
+                          whileTap={{ scale: 0.98 }}
+                        >
+                          <motion.div
+                            className={`p-1.5 rounded-lg bg-gradient-to-br ${btn.gradient} shadow-lg`}
+                            style={{ boxShadow: `0 4px 12px ${btn.color === 'red' ? 'rgba(239, 68, 68, 0.3)' : btn.color === 'orange' ? 'rgba(249, 115, 22, 0.3)' : 'rgba(234, 179, 8, 0.3)'}` }}
+                            whileHover={{ rotate: [0, -5, 5, 0] }}
+                            transition={{ duration: 0.3 }}
+                          >
+                            <IconComponent className="w-4 h-4 text-white" />
+                          </motion.div>
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="font-bold" style={{ color: textColor }}>
+                              {btn.label}
+                            </span>
+                            <span className={`text-[9px] font-medium ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                              {btn.subLabel}
+                            </span>
+                          </div>
+                          <motion.div
+                            className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                            style={{
+                              background: `radial-gradient(circle at center, ${btn.color === 'red' ? 'rgba(239, 68, 68, 0.1)' : btn.color === 'orange' ? 'rgba(249, 115, 22, 0.1)' : 'rgba(234, 179, 8, 0.1)'}, transparent)`,
+                              border: `1px solid ${hoverBorderColor}`,
+                            }}
+                          />
+                        </motion.button>
+                      );
+                    })}
+                  </div>
+                  
+                  <p className={`text-center text-[10px] mt-3 ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                    基于当前话单内容自动生成安全防护规则
+                  </p>
+                </motion.div>
               </div>
-            </motion.div>
+            </div>
+          </motion.div>
           )}
-        </motion.div>
-      </div>
-    );
-  };
+        </AnimatePresence>
+      </motion.div>
+    </div>
+  );
+};
 
 
 
@@ -1813,104 +2152,135 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
       >
         {/* 会话概览卡片 */}
         <motion.div
-          whileHover={{ y: -2, boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}
-          className="p-4 rounded-2xl bg-gradient-to-br from-[var(--accent-blue)]/10 to-transparent border border-[var(--accent-blue)]/20 backdrop-blur-sm shadow-sm"
+          whileHover={{ y: -4, scale: 1.01 }}
+          transition={{ duration: 0.2 }}
+          className={`p-5 rounded-2xl backdrop-blur-xl border transition-all duration-300 ${
+            isDarkMode 
+              ? 'bg-blue-500/10 border-blue-500/20 hover:border-blue-500/40' 
+              : 'bg-blue-50/80 border-blue-200 hover:border-blue-300'
+          }`}
+          style={{ boxShadow: '0 4px 20px rgba(59, 130, 246, 0.15)' }}
         >
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-8 h-8 rounded-xl bg-[var(--accent-blue)]/20 flex items-center justify-center">
-              <Activity className="w-4 h-4 text-[var(--accent-blue)]" />
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2.5 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg shadow-blue-500/25">
+              <Activity className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-[var(--foreground)] leading-tight">会话概览</h3>
-              <p className="text-xs text-[var(--text-secondary)] leading-tight">完整调用链分析</p>
+              <h3 className={`text-sm font-bold leading-tight ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>会话概览</h3>
+              <p className={`text-xs leading-tight ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>完整调用链分析</p>
             </div>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-[var(--text-secondary)]">会话ID</span>
-              <span className="text-xs font-semibold text-[var(--foreground)] font-mono">{selectedSession.mainEntry.logID}</span>
+              <span className={`text-xs font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>会话ID</span>
+              <span className={`text-xs font-semibold font-mono ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{selectedSession.mainEntry.logID}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-[var(--text-secondary)]">时间范围</span>
-              <span className="text-xs font-semibold text-[var(--foreground)] whitespace-nowrap">
+              <span className={`text-xs font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>时间范围</span>
+              <span className={`text-xs font-semibold whitespace-nowrap ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
                 {formatTime(selectedSession.startTime.toString())} - {formatTime(selectedSession.endTime.toString())}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-[var(--text-secondary)]">总条目数</span>
-              <span className="text-xs font-semibold text-[var(--foreground)]">{totalEntries}</span>
+              <span className={`text-xs font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>总条目数</span>
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">{totalEntries}</span>
             </div>
           </div>
         </motion.div>
 
         {/* 类型分布卡片 */}
         <motion.div
-          whileHover={{ y: -2, boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}
-          className="p-4 rounded-2xl bg-gradient-to-br from-purple-500/10 to-transparent border border-purple-500/20 backdrop-blur-sm shadow-sm"
+          whileHover={{ y: -4, scale: 1.01 }}
+          transition={{ duration: 0.2 }}
+          className={`p-5 rounded-2xl backdrop-blur-xl border transition-all duration-300 ${
+            isDarkMode 
+              ? 'bg-purple-500/10 border-purple-500/20 hover:border-purple-500/40' 
+              : 'bg-purple-50/80 border-purple-200 hover:border-purple-300'
+          }`}
+          style={{ boxShadow: '0 4px 20px rgba(139, 92, 246, 0.15)' }}
         >
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-8 h-8 rounded-xl bg-purple-500/20 flex items-center justify-center">
-              <BarChart3 className="w-4 h-4 text-purple-500" />
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2.5 rounded-xl bg-gradient-to-br from-purple-500 to-pink-600 shadow-lg shadow-purple-500/25">
+              <BarChart3 className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-[var(--foreground)] leading-tight">类型分布</h3>
-              <p className="text-xs text-[var(--text-secondary)] leading-tight">调用类型统计</p>
+              <h3 className={`text-sm font-bold leading-tight ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>类型分布</h3>
+              <p className={`text-xs leading-tight ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>调用类型统计</p>
             </div>
           </div>
           <div className="space-y-2">
-            {entryTypes.map(type => {
+            {entryTypes.slice(0, 4).map(type => {
               const count = entries.filter(e => e.dataType === type).length;
               return (
                 <div key={type} className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">{type}</span>
+                  <span className={`text-xs font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>{type}</span>
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full" style={{ backgroundColor: getDataTypeColor(type) }} />
-                    <span className="text-xs font-semibold text-[var(--foreground)]">{count}</span>
+                    <span className={`text-xs font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{count}</span>
                   </div>
                 </div>
               );
             })}
+            {entryTypes.length > 4 && (
+              <div className={`text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                +{entryTypes.length - 4} 更多类型
+              </div>
+            )}
           </div>
         </motion.div>
 
         {/* 风险评估卡片 */}
         <motion.div
-          whileHover={{ y: -2, boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}
-          className={`p-4 rounded-2xl backdrop-blur-sm shadow-sm ${hasHighRisk ? 'bg-gradient-to-br from-red-500/10 to-transparent border border-red-500/20' : hasMediumRisk ? 'bg-gradient-to-br from-yellow-500/10 to-transparent border border-yellow-500/20' : 'bg-gradient-to-br from-green-500/10 to-transparent border border-green-500/20'}`}
+          whileHover={{ y: -4, scale: 1.01 }}
+          transition={{ duration: 0.2 }}
+          className={`p-5 rounded-2xl backdrop-blur-xl border transition-all duration-300 ${
+            hasHighRisk 
+              ? isDarkMode ? 'bg-red-500/10 border-red-500/20 hover:border-red-500/40' : 'bg-red-50/80 border-red-200 hover:border-red-300'
+              : hasMediumRisk 
+                ? isDarkMode ? 'bg-yellow-500/10 border-yellow-500/20 hover:border-yellow-500/40' : 'bg-yellow-50/80 border-yellow-200 hover:border-yellow-300'
+                : isDarkMode ? 'bg-green-500/10 border-green-500/20 hover:border-green-500/40' : 'bg-green-50/80 border-green-200 hover:border-green-300'
+          }`}
+          style={{ boxShadow: hasHighRisk ? '0 4px 20px rgba(239, 68, 68, 0.15)' : hasMediumRisk ? '0 4px 20px rgba(234, 179, 8, 0.15)' : '0 4px 20px rgba(34, 197, 94, 0.15)' }}
         >
-          <div className="flex items-center gap-2 mb-3">
-            <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${hasHighRisk ? 'bg-red-500/20' : hasMediumRisk ? 'bg-yellow-500/20' : 'bg-green-500/20'}`}>
-              <Shield className={`w-4 h-4 ${hasHighRisk ? 'text-red-500' : hasMediumRisk ? 'text-yellow-500' : 'text-green-500'}`} />
+          <div className="flex items-center gap-3 mb-4">
+            <div className={`p-2.5 rounded-xl shadow-lg ${
+              hasHighRisk 
+                ? 'bg-gradient-to-br from-red-500 to-rose-600 shadow-red-500/25' 
+                : hasMediumRisk 
+                  ? 'bg-gradient-to-br from-yellow-500 to-amber-600 shadow-yellow-500/25' 
+                  : 'bg-gradient-to-br from-green-500 to-emerald-600 shadow-green-500/25'
+            }`}>
+              <Shield className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-[var(--foreground)] leading-tight">风险评估</h3>
-              <p className="text-xs text-[var(--text-secondary)] leading-tight">会话安全分析</p>
+              <h3 className={`text-sm font-bold leading-tight ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>风险评估</h3>
+              <p className={`text-xs leading-tight ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>会话安全分析</p>
             </div>
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-[var(--text-secondary)]">高风险</span>
+              <span className={`text-xs font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>高风险</span>
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-red-500" />
-                <span className={`text-xs font-semibold ${hasHighRisk ? 'text-red-500' : 'text-[var(--foreground)]'}`}>
+                <span className={`text-xs font-semibold ${hasHighRisk ? 'text-red-400' : isDarkMode ? 'text-white' : 'text-gray-900'}`}>
                   {entries.filter(e => e.llmProvider === 'HIGH').length}
                 </span>
               </div>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-[var(--text-secondary)]">中风险</span>
+              <span className={`text-xs font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>中风险</span>
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-yellow-500" />
-                <span className={`text-xs font-semibold ${hasMediumRisk ? 'text-yellow-500' : 'text-[var(--foreground)]'}`}>
+                <span className={`text-xs font-semibold ${hasMediumRisk ? 'text-yellow-400' : isDarkMode ? 'text-white' : 'text-gray-900'}`}>
                   {entries.filter(e => e.llmProvider === 'MEDIUM').length}
                 </span>
               </div>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-[var(--text-secondary)]">低风险</span>
+              <span className={`text-xs font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>低风险</span>
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-green-500" />
-                <span className="text-xs font-semibold text-[var(--foreground)]">
+                <span className={`text-xs font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
                   {entries.filter(e => e.llmProvider === 'LOW').length}
                 </span>
               </div>
@@ -1926,7 +2296,11 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-      className="rounded-2xl p-6 bg-[var(--card-background)] border border-[var(--border-color)] min-h-[600px] shadow-sm"
+      className={`rounded-2xl p-6 min-h-[600px] backdrop-blur-2xl border transition-all duration-300 ${
+        isDarkMode 
+          ? 'bg-gray-800/40 border-gray-700/50 shadow-xl shadow-black/20' 
+          : 'bg-white/60 border-gray-200/50 shadow-xl shadow-gray-200/50'
+      }`}
       style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' }}
     >
       {/* 头部 */}
@@ -1934,18 +2308,15 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
         <div>
           <div className="flex items-center gap-3 mb-2">
             <motion.div 
-              className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-teal-600 flex items-center justify-center shadow-lg"
+              className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/25"
               whileHover={{ scale: 1.05, rotate: 5 }}
               transition={{ duration: 0.2 }}
-              style={{
-                boxShadow: '0 8px 16px -4px rgba(20, 184, 166, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.2) inset'
-              }}
             >
               <LayoutDashboard className="w-5 h-5 text-white" />
             </motion.div>
-            <h3 className="text-xl font-semibold text-[var(--foreground)] tracking-tight">会话级全景分析</h3>
+            <h3 className={`text-xl font-bold tracking-tight ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>会话级全景分析</h3>
           </div>
-          <div className="flex items-center gap-4 text-sm text-[var(--text-secondary)]">
+          <div className={`flex items-center gap-4 text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4" />
               <span>会话已聚合展示</span>
@@ -1955,7 +2326,7 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
               <span>全景展示会话关系</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs bg-teal-500/10 text-teal-500 px-2 py-0.5 rounded-full">
+              <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full font-medium">
                 共 {aggregatedSessions.length} 个会话
               </span>
             </div>
@@ -1964,19 +2335,22 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
 
         {/* 会话选择器 - 带搜索功能 */}
         <div className="mt-4 md:mt-0 relative" ref={filterMenuRef}>
-          <label className="block text-xs font-semibold text-[var(--text-secondary)] mb-2 uppercase tracking-wider">选择会话</label>
+          <label className={`block text-xs font-semibold mb-2 uppercase tracking-wider ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>选择会话</label>
           <div className="relative">
             {/* 选择按钮 */}
             <button
-              className="w-full md:w-115 flex items-center justify-between px-4 py-3 rounded-xl text-sm text-[var(--foreground)] transition-all duration-300 bg-[var(--card-background)]/60 backdrop-blur-xl border border-[var(--border-color)]/40 hover:bg-[var(--card-background)]/80 hover:border-[var(--accent-blue)]/30 cursor-pointer"
-              style={{ boxShadow: '0 4px 16px -4px rgba(0, 0, 0, 0.08)' }}
+              className={`w-full md:w-115 flex items-center justify-between px-4 py-3 rounded-xl text-sm transition-all duration-300 backdrop-blur-xl border cursor-pointer ${
+                isDarkMode 
+                  ? 'bg-gray-800/60 border-gray-700/50 text-white hover:bg-gray-700/60 hover:border-blue-500/30' 
+                  : 'bg-white/60 border-gray-200/50 text-gray-900 hover:bg-white/80 hover:border-blue-300'
+              }`}
               onClick={() => setIsSessionDropdownOpen(!isSessionDropdownOpen)}
             >
               {selectedSession ? (
                 <div className="flex items-center gap-2 truncate">
                   <span className={`px-1.5 py-0.5 rounded text-xs font-semibold shrink-0 ${
                     selectedSession.mainEntry.dataType === 'AG-UI' 
-                      ? 'bg-[var(--accent-blue)]/20 text-[var(--accent-blue)]' 
+                      ? 'bg-blue-500/20 text-blue-400' 
                       : 'bg-purple-500/20 text-purple-400'
                   }`}>
                     {selectedSession.mainEntry.dataType}
@@ -1984,9 +2358,9 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
                   <span className="font-medium truncate">{selectedSession.mainEntry.logID}</span>
                 </div>
               ) : (
-                <span className="text-[var(--text-secondary)]">请选择会话</span>
+                <span className={isDarkMode ? 'text-gray-400' : 'text-gray-500'}>请选择会话</span>
               )}
-              <ChevronDown className={`w-4 h-4 text-[var(--text-secondary)] transition-transform duration-200 shrink-0 ml-2 ${isSessionDropdownOpen ? 'rotate-180' : ''}`} />
+              <ChevronDown className={`w-4 h-4 transition-transform duration-200 shrink-0 ml-2 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} ${isSessionDropdownOpen ? 'rotate-180' : ''}`} />
             </button>
 
             {/* 下拉菜单 */}
@@ -1997,20 +2371,22 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -10, scale: 0.95 }}
                   transition={{ duration: 0.2 }}
-                  className="absolute left-0 mt-2 w-full md:w-115 rounded-2xl shadow-2xl z-50 overflow-hidden"
-                  style={{
-                    background: 'var(--card-background)',
-                    backdropFilter: 'blur(24px)',
-                    border: '1px solid var(--border-color)',
-                    boxShadow: '0 24px 48px rgba(0, 0, 0, 0.3)'
-                  }}
+                  className={`absolute left-0 mt-2 w-full md:w-115 rounded-2xl shadow-2xl z-50 overflow-hidden backdrop-blur-2xl border ${
+                    isDarkMode 
+                      ? 'bg-gray-800/95 border-gray-700/50' 
+                      : 'bg-white/95 border-gray-200'
+                  }`}
                 >
                   {/* 搜索输入框 */}
-                  <div className="p-3 border-b border-[var(--border-color)]/50">
+                  <div className={`p-3 border-b ${isDarkMode ? 'border-gray-700/50' : 'border-gray-200'}`}>
                     <input
                       type="text"
                       placeholder="搜索会话ID..."
-                      className="w-full px-3 py-2.5 rounded-xl bg-[var(--background)]/50 border border-[var(--border-color)]/40 text-sm text-[var(--foreground)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)] focus:border-transparent transition-all duration-200"
+                      className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ${
+                        isDarkMode 
+                          ? 'bg-gray-900/50 border-gray-700/50 text-white placeholder-gray-500' 
+                          : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'
+                      }`}
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
                       autoFocus
@@ -2020,7 +2396,7 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
                   {/* 会话列表 */}
                   <div className="max-h-80 overflow-y-auto p-2">
                     {filteredSessions.length === 0 ? (
-                      <div className="text-center text-sm text-[var(--text-secondary)] py-8">
+                      <div className={`text-center text-sm py-8 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                         {searchTerm.trim() ? '没有找到匹配的会话' : '暂无会话数据'}
                       </div>
                     ) : (
@@ -2301,7 +2677,7 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
                     }, {} as Record<string, number>);
                     
                     const totalCount = selectedSession.allEntries.length;
-                    const typeOrder = ['AG-UI', 'HTTP', 'LLM', 'AGENT', 'RAG', 'MCP', 'FILE', 'EXEC', 'OPENCLAW'];
+                    const typeOrder = ['AG-UI', 'HTTP', 'LLM', 'AGENT', 'RAG', 'MCP', 'FILE', 'EXEC', 'OPENCLAW', 'UNKNOWN'];
                     
                     const allTypes = ['全部', ...typeOrder];
                     

@@ -7,13 +7,17 @@ import { ParsedLogEntry } from '@/types/log';
 import { getDataTypeColor } from '@/lib/logParser';
 import { aggregateSessions } from '@/lib/sessionAggregator';
 
-// BASE64解码函数
+// BASE64解码函数 - 支持UTF-8编码
 const decodeBase64 = (str: string | undefined): string => {
   if (!str) return '';
   try {
-    return atob(str);
-  } catch (e) {
-    console.error('Failed to decode base64:', e);
+    const binaryString = atob(str);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return new TextDecoder('utf-8').decode(bytes);
+  } catch {
     return str;
   }
 };// 组件属性定义

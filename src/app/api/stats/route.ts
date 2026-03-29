@@ -94,7 +94,10 @@ export async function GET(request: NextRequest) {
         
         stats.totalRequests++;
         
-        const dataType = log.dataType || 'UNKNOWN';
+        let dataType = log.dataType || 'UNKNOWN';
+        if (dataType === 'UNKNOW') {
+          dataType = 'UNKNOWN';
+        }
         stats.requestsByType[dataType] = (stats.requestsByType[dataType] || 0) + 1;
 
         const tokens = parseInt(log.tokenTotal || '0', 10);

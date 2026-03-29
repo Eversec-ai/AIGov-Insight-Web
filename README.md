@@ -27,6 +27,15 @@
 
 > **注意**: 本仓库仅包含 Web 可视化层。AI 智能数据采集探针参见 [AIGov-Insight Agent](https://github.com/Eversec-ai/AIGov-Insight-Agent)。
 
+
+### 🎉 v0.3.0 更新亮点
+
+AIGov-Insight Web v0.3.0 迎来重大架构升级，从“被动观测”正式迈向“主动防御”。本次更新重构了底层交互逻辑，引入全新的 OpenClaw 智能防护中心对应针对龙虾全新的安全防护能力，在保持极致视觉体验的同时，为 AI 智能体加装了“安全刹车片”。
+
+| 全新 UI + OpenClaw 智能防护中心  |
+|:---:|
+| ![Defense Hub](./docs/screenshots/defense-hub.png) |
+
 ### ✨ 核心特性
 
 #### 🔍 全息可视化
@@ -47,11 +56,21 @@
 - **多会话关联分析** - 跨会话事件关联
 - **全文搜索 + Dark Mode** - 现代化用户体验
 
+#### 🛡️ OpenClaw 智能体主动防御
+- **毫秒级实时拦截** - 支持 Block（阻断）、Confirm（确认）、Warn（告警）三级防御机制。
+- **热加载动态策略** - 规则变更后秒级生效，**无需重启 AI 服务**，业务零中断。
+- **全场景规则覆盖** - 内置 8 大场景模板（防删库、防密钥泄露、防集群误删等），支持自定义正则匹配。
+- **全系统联动** - 实时日志会话分析联动安全防护，快速转化自定义防护规则。
+
 ### 📸 功能截图
 
 | 实时日志 + Dashboard 多指标仪表盘 | 交互式AI观测日志时间线 + 高效动态话单加载 |
 |:---:|:---:|
 | ![Dashboard](./docs/screenshots/dashboard.png) | ![Timeline](./docs/screenshots/timeline.png) |
+
+| OpenClaw 安全防护概览 | OpenClaw 安全防护规则 |
+|:---:|:---:|
+| ![](./docs/screenshots/defense-logs.png) | ![](./docs/screenshots/rules-template.png) |
 
 | 会话级多维度启发式分析 | 会话级全景分析 + 全流程拓扑图 |
 |:---:|:---:|
@@ -60,7 +79,6 @@
 | 会话流程分析 + 自然语言 | OpenClaw 会话级关联分析 |
 |:---:|:---:|
 | ![Agent Analysis](./docs/screenshots/agent-analysis.png) | ![OpenClaw Analysis](./docs/screenshots/openclaw-analysis.png) |
-
 
 
 ### 🚀 快速开始

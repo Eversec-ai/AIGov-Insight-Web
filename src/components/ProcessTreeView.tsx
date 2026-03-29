@@ -5,6 +5,7 @@ import { Trees, ChevronDown, ChevronUp, Clock, Activity, BarChart3, Shield, Serv
 import { useState, useMemo } from 'react';
 import { ParsedLogEntry } from '@/types/log';
 import { getDataTypeColor, getDataTypeIcon, getRiskLevelBgClass } from '@/lib/logParser';
+import { CopyableLogId } from '@/components/CopyableLogId';
 
 interface ProcessTreeViewProps {
   logs: ParsedLogEntry[];
@@ -24,13 +25,17 @@ interface ProcessNode {
   category: 'system' | 'python' | 'llm' | 'agent' | 'web' | 'database' | 'container' | 'user' | 'other';
 }
 
-// BASE64解码函数
+// BASE64解码函数 - 支持UTF-8编码
 const decodeBase64 = (str: string | undefined): string => {
   if (!str) return '';
   try {
-    return atob(str);
-  } catch (e) {
-    console.error('Failed to decode base64:', e);
+    const binaryString = atob(str);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return new TextDecoder('utf-8').decode(bytes);
+  } catch {
     return str;
   }
 };
@@ -479,9 +484,7 @@ export function ProcessTreeView({ logs, searchKeyword = '', filteredProcessTypes
                       <h4 className="text-xs font-semibold text-[var(--foreground)] truncate flex-1 leading-tight">
                         {highlightKeyword(displayTitle, searchKeyword)}
                       </h4>
-                      <span className="text-[var(--text-secondary)] text-[11px] truncate whitespace-nowrap ml-1">
-                        {highlightKeyword(entry.logID || entry.id, searchKeyword)}
-                      </span>
+                      <CopyableLogId id={entry.logID || entry.id} className="ml-1" textClassName="text-[11px] text-[var(--text-secondary)]" />
                     </div>
                 
                 {/* 增强的缩略内容 - 参考实时日志展示 */}

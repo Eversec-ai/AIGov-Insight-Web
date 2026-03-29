@@ -4,6 +4,21 @@ import { Calendar, Clock, Search, ChevronDown, Server, Network, Info, Activity, 
 import { ParsedLogEntry } from '@/types/log';
 import { aggregateSessions } from '@/lib/sessionAggregator';
 
+// BASE64解码函数 - 支持UTF-8编码
+const decodeBase64 = (str: string | undefined): string => {
+  if (!str) return '';
+  try {
+    const binaryString = atob(str);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return new TextDecoder('utf-8').decode(bytes);
+  } catch {
+    return str || '';
+  }
+};
+
 function useTheme() {
   const [isDark, setIsDark] = useState(false);
 
@@ -1015,7 +1030,7 @@ export function SessionTimelineView({ logs, targetSessionId, onViewLog }: Sessio
                             {hoveredEvent.entry.answer && (
                               <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
                                 <div className="text-[var(--text-secondary)] mb-1">可执行文件路径</div>
-                                <div className="text-[13px] font-mono text-[var(--foreground)] break-all">{(() => { try { return atob(hoveredEvent.entry.answer); } catch { return hoveredEvent.entry.answer; } })()}</div>
+                                <div className="text-[13px] font-mono text-[var(--foreground)] break-all">{decodeBase64(hoveredEvent.entry.answer)}</div>
                               </div>
                             )}
                             {hoveredEvent.entry.llmProvider && (
@@ -1052,7 +1067,7 @@ export function SessionTimelineView({ logs, targetSessionId, onViewLog }: Sessio
                             {hoveredEvent.entry.answer && (
                               <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
                                 <div className="text-[var(--text-secondary)] mb-1">文件路径</div>
-                                <div className="text-[13px] font-mono text-[var(--foreground)] break-all bg-[var(--hover-background)] p-1.5 rounded-md">{(() => { try { return atob(hoveredEvent.entry.answer); } catch { return hoveredEvent.entry.answer; } })()}</div>
+                                <div className="text-[13px] font-mono text-[var(--foreground)] break-all bg-[var(--hover-background)] p-1.5 rounded-md">{decodeBase64(hoveredEvent.entry.answer)}</div>
                               </div>
                             )}
                             {hoveredEvent.entry.llmProvider && (
