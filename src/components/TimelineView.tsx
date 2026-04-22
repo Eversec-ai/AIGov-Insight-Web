@@ -93,6 +93,7 @@ export function TimelineView({
     'MCP': true,
     'FILE': true,
     'EXEC': true,
+    'TOOLCALL': true,
     'OPENCLAW': true,
     'OTHER': true
   });
@@ -123,6 +124,7 @@ export function TimelineView({
     { name: 'MCP', color: 'bg-pink-400', icon: '🔌' },
     { name: 'FILE', color: 'bg-amber-400', icon: '📁' },
     { name: 'EXEC', color: 'bg-indigo-500', icon: '⚡' },
+    { name: 'TOOLCALL', color: 'bg-amber-500', icon: '🔧' },
     { name: 'OTHER', color: 'bg-gray-400', icon: '⚪' },
   ], []);
 
@@ -231,6 +233,7 @@ useEffect(() => {
             'MCP': 10 * 1000,
             'FILE': 5 * 1000,
             'EXEC': 5 * 1000,
+            'TOOLCALL': 5 * 1000,
             'OTHER': 2 * 1000
           };
           const defaultDuration = defaultDurations[entry.dataType] || 2000;
@@ -332,6 +335,7 @@ useEffect(() => {
             'MCP': 10 * 1000,
             'FILE': 5 * 1000,
             'EXEC': 5 * 1000,
+            'TOOLCALL': 5 * 1000,
             'OTHER': 2 * 1000
           };
           const defaultDuration = defaultDurations[entry.dataType] || 2000;
@@ -1165,6 +1169,56 @@ useEffect(() => {
                         <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
                           <div className="text-[var(--text-secondary)] mb-1 text-[12px]">可执行文件路径</div>
                           <div className="text-[12px] font-mono text-[var(--foreground)] break-all bg-[var(--hover-background)] p-1.5 rounded-md">{decodeBase64(tooltip.event.entry.answer)}</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {tooltip.event.type === 'TOOLCALL' && (
+                  <div className="mt-3 pt-3 border-t border-[var(--border-color)]/50">
+                    <div className="text-[12px] font-medium text-[var(--text-secondary)] mb-2">工具调用信息</div>
+                    <div className="space-y-2">
+                      {tooltip.event.entry.toolName && (
+                        <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
+                          <div className="text-[var(--text-secondary)] mb-1 text-[12px]">工具名称</div>
+                          <div className="text-[12px] font-mono text-[var(--foreground)]">{tooltip.event.entry.toolName}</div>
+                        </div>
+                      )}
+                      {tooltip.event.entry.llmProvider && (
+                        <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
+                          <div className="text-[var(--text-secondary)] mb-1 text-[12px]">风险等级</div>
+                          <span className={`px-1.5 py-0.5 rounded-full text-[12px] ${tooltip.event.entry.llmProvider === 'HIGH' ? 'bg-red-100 text-red-800' : tooltip.event.entry.llmProvider === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' : tooltip.event.entry.llmProvider === 'INFO' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
+                            {tooltip.event.entry.llmProvider}
+                          </span>
+                        </div>
+                      )}
+                      {tooltip.event.entry.answer && (() => {
+                        const tcStatus = decodeBase64(tooltip.event.entry.answer);
+                        const statusMap: Record<string, string> = { completed: '已完成', failed: '失败', blocked: '已拦截', running: '运行中' };
+                        return (
+                          <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
+                            <div className="text-[var(--text-secondary)] mb-1 text-[12px]">调用状态</div>
+                            <div className="text-[12px] font-medium text-[var(--foreground)]">{statusMap[tcStatus] || tcStatus}</div>
+                          </div>
+                        );
+                      })()}
+                      {tooltip.event.entry.parsedQuery && (
+                        <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
+                          <div className="text-[var(--text-secondary)] mb-1 text-[12px]">调用描述</div>
+                          <div className="text-[12px] text-[var(--foreground)] break-all bg-[var(--hover-background)] p-1.5 rounded-md">{tooltip.event.entry.parsedQuery}</div>
+                        </div>
+                      )}
+                      {tooltip.event.entry.toolInput && (
+                        <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
+                          <div className="text-[var(--text-secondary)] mb-1 text-[12px]">工具参数</div>
+                          <div className="text-[12px] font-mono text-[var(--foreground)] break-all bg-[var(--hover-background)] p-1.5 rounded-md max-h-20 overflow-y-auto">{tooltip.event.entry.toolInput}</div>
+                        </div>
+                      )}
+                      {tooltip.event.entry.latency && parseFloat(tooltip.event.entry.latency) > 0 && (
+                        <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
+                          <div className="text-[var(--text-secondary)] mb-1 text-[12px]">耗时</div>
+                          <div className="text-[12px] font-medium text-[var(--foreground)]">{(parseFloat(tooltip.event.entry.latency)).toFixed(2)}s</div>
                         </div>
                       )}
                     </div>

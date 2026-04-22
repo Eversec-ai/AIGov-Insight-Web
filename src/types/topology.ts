@@ -1,8 +1,8 @@
 import { ParsedLogEntry } from '@/types/log';
 
-export type NodeType = 'server' | 'mcp' | 'http' | 'file' | 'exec' | 'openclaw';
+export type NodeType = 'server' | 'mcp' | 'http' | 'file' | 'exec' | 'openclaw' | 'toolcall';
 
-export type ConnectionType = 'agui' | 'mcp' | 'http' | 'file' | 'openclaw';
+export type ConnectionType = 'agui' | 'mcp' | 'http' | 'file' | 'openclaw' | 'toolcall';
 
 export interface TopologyNode {
   id: string;

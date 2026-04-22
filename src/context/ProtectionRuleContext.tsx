@@ -6,7 +6,7 @@ export interface PrefilledRuleData {
   pattern: string;
   description: string;
   type: 'block' | 'confirm' | 'warn';
-  sourceType: 'OPENCLAW' | 'LLM' | 'EXEC' | 'FILE' | 'HTTP' | 'AGENT' | 'RAG' | 'MCP' | 'AG-UI';
+  sourceType: 'OPENCLAW' | 'LLM' | 'EXEC' | 'FILE' | 'HTTP' | 'AGENT' | 'RAG' | 'MCP' | 'AG-UI' | 'TOOLCALL';
   sourceInfo?: {
     logId?: string;
     processName?: string;

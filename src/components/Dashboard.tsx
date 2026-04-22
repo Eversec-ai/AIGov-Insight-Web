@@ -87,6 +87,7 @@ export default function Dashboard() {
       'AG-UI': true,
       'FILE': true,
       'EXEC': true,
+      'TOOLCALL': true,
       'OPENCLAW': true,
       'UNKNOWN': true
     },
@@ -114,6 +115,7 @@ export default function Dashboard() {
     'MCP': true,
     'FILE': true,
     'EXEC': true,
+      'TOOLCALL': true,
     'OPENCLAW': true,
     'UNKNOWN': true,
     'OTHER': true
@@ -131,6 +133,7 @@ export default function Dashboard() {
       'AG-UI': true,
       'FILE': true,
       'EXEC': true,
+      'TOOLCALL': true,
       'OPENCLAW': true,
       'UNKNOWN': true
     },
@@ -171,6 +174,7 @@ export default function Dashboard() {
       'AG-UI': true,
       'FILE': true,
       'EXEC': true,
+      'TOOLCALL': true,
       'OPENCLAW': true,
       'UNKNOWN': true
     }
@@ -227,6 +231,7 @@ export default function Dashboard() {
       'MCP': true,
       'FILE': true,
       'EXEC': true,
+      'TOOLCALL': true,
       'OPENCLAW': true,
       'UNKNOWN': true,
       'OTHER': true
@@ -284,6 +289,7 @@ export default function Dashboard() {
           'AG-UI': true,
           FILE: true,
           EXEC: true,
+          TOOLCALL: true,
           OPENCLAW: true,
           UNKNOWN: true
         },
@@ -306,6 +312,7 @@ export default function Dashboard() {
           'AG-UI': false,
           FILE: true,
           EXEC: true,
+          TOOLCALL: true,
           OPENCLAW: false,
           UNKNOWN: false
         },
@@ -328,6 +335,7 @@ export default function Dashboard() {
           'AG-UI': type === 'AG-UI',
           FILE: type === 'FILE',
           EXEC: type === 'EXEC',
+          TOOLCALL: type === 'TOOLCALL',
           OPENCLAW: type === 'OPENCLAW',
           UNKNOWN: type === 'UNKNOWN'
         },
@@ -902,6 +910,7 @@ export default function Dashboard() {
                               'AG-UI': true,
                               'FILE': true,
                               'EXEC': true,
+      'TOOLCALL': true,
                               'OPENCLAW': true,
                               'UNKNOWN': true
                             }
@@ -946,6 +955,7 @@ export default function Dashboard() {
                               'AG-UI': true,
                               'FILE': true,
                               'EXEC': true,
+      'TOOLCALL': true,
                               'OPENCLAW': true,
                               'UNKNOWN': true
                             },
@@ -1121,6 +1131,7 @@ export default function Dashboard() {
                               'AG-UI': true,
                               'FILE': true,
                               'EXEC': true,
+      'TOOLCALL': true,
                               'OPENCLAW': true,
                               'UNKNOWN': true
                             }
@@ -1176,6 +1187,7 @@ export default function Dashboard() {
                           'AG-UI': true,
                           'FILE': true,
                           'EXEC': true,
+      'TOOLCALL': true,
                           'OPENCLAW': true,
                           'UNKNOWN': true
                         }
@@ -1537,6 +1549,7 @@ export default function Dashboard() {
                             'AG-UI': true,
                             'FILE': true,
                             'EXEC': true,
+      'TOOLCALL': true,
                             'OPENCLAW': true,
                             'UNKNOWN': true
                           }
@@ -1626,6 +1639,7 @@ export default function Dashboard() {
                         'AG-UI': true,
                         'FILE': true,
                         'EXEC': true,
+      'TOOLCALL': true,
                         'OPENCLAW': true,
                         'UNKNOWN': true
                       },
@@ -1827,6 +1841,7 @@ export default function Dashboard() {
                           'AG-UI': true,
                           'FILE': true,
                           'EXEC': true,
+      'TOOLCALL': true,
                           'OPENCLAW': true,
                           'UNKNOWN': true
                         } }))}
@@ -1848,7 +1863,8 @@ export default function Dashboard() {
                               'AG-UI': true,
                               'FILE': false,
                               'EXEC': false,
-                              'OPENCLAW': false,
+                              'TOOLCALL': false,
+                              'OPENCLAW': true,
                               'UNKNOWN': false
                             }
                           }));
@@ -1944,6 +1960,7 @@ export default function Dashboard() {
                                             'AG-UI': type === 'AG-UI',
                                             FILE: type === 'FILE',
                                             EXEC: type === 'EXEC',
+                                            TOOLCALL: type === 'TOOLCALL',
                                             OPENCLAW: type === 'OPENCLAW',
                                             UNKNOWN: type === 'UNKNOWN'
                                           }

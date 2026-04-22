@@ -1,0 +1,29 @@
+{
+  "block": {
+    "/tmp/block.txt": "禁止访问高风险文件",
+    "/etc/passwd": "禁止访问系统密码文件",
+    "/etc/shadow": "禁止访问系统影子文件",
+    "/root/.ssh/": "禁止访问 SSH 密钥目录",
+    "~/.ssh/": "禁止访问 SSH 密钥目录",
+    "rm -rf /": "禁止执行系统毁灭命令",
+    "mkfs": "禁止格式化磁盘",
+    "dd if=": "禁止磁盘镜像操作"
+  },
+  "confirm": {
+    "/tmp/confirm.txt": "关键文件需要确认",
+    "rm ": "文件删除操作需要确认",
+    "DROP ": "数据库删除操作需要确认",
+    "TRUNCATE": "数据库清空操作需要确认",
+    "docker rm": "Docker 容器删除需要确认",
+    "docker rmi": "Docker 镜像删除需要确认",
+    "kubectl delete": "Kubernetes 删除操作需要确认",
+    "git push --force": "强制推送需要确认"
+  },
+  "warn": {
+    "/tmp/warn.txt": "警告：访问关键文件",
+    ".env": "警告：正在访问环境变量文件",
+    "credentials": "警告：正在访问凭证文件",
+    "secrets": "警告：正在访问密钥文件",
+    "private_key": "警告：正在访问私钥"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://openclaw.ai/schemas/plugin.json",
+  "id": "aigov-insight",
+  "name": "AIGov-Insight",
+  "version": "1.0.0",
+  "kind": "security",
+  "description": "AIGov-Insight - 智能体安全治理插件，提供阻断/确认/告警三种安全动作，支持热加载配置，零外部依赖",
+  "author": "",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "启用安全插件"
+      }
+    }
+  },
+  "capabilities": {
+    "requiresApprovalAPI": true,
+    "requiresLogging": true,
+    "requiresConversationAccess": false,
+    "requiresNetworkAccess": false
+  },
+  "permissions": [
+    "hook:before-tool-call",
+    "api:approval",
+    "api:logging"
+  ]
+}

@@ -434,6 +434,18 @@ export function ProcessTreeView({ logs, searchKeyword = '', filteredProcessTypes
             return cmd.length > 100 ? cmd.substring(0, 100) + '...' : cmd;
           }
           return 'Command Execution';
+        case 'TOOLCALL':
+          const ptcToolName = entry.toolName || '未知工具';
+          const ptcStatus = decodeBase64(entry.answer) || '';
+          const ptcQuery = entry.parsedQuery || '';
+          if (ptcQuery) {
+            const shortQuery = ptcQuery.length > 60 ? ptcQuery.substring(0, 60) + '...' : ptcQuery;
+            return `${ptcToolName} - ${shortQuery}`;
+          }
+          if (ptcStatus) {
+            return `${ptcToolName} [${ptcStatus}]`;
+          }
+          return `${ptcToolName} 工具调用`;
       }
       
       // 其他类型优先显示用户查询
@@ -544,6 +556,38 @@ export function ProcessTreeView({ logs, searchKeyword = '', filteredProcessTypes
                         <div className="flex items-center gap-1 max-w-xs" title={decodeBase64(entry.answer)}>
                           <span className="font-medium">路径:</span>
                           <span className="truncate font-mono text-[10px]">{highlightKeyword(decodeBase64(entry.answer), searchKeyword)}</span>
+                        </div>
+                      )}
+                    </>
+                  ) : entry.dataType === 'TOOLCALL' ? (
+                    <>
+                      {entry.llmProvider && (
+                        <div className="flex items-center gap-1">
+                          <span className="font-medium">风险:</span>
+                          <span className={`px-1 py-0.5 rounded-full text-[10px] ${getRiskLevelBgClass(entry.llmProvider)}`}>
+                            {highlightKeyword(entry.llmProvider, searchKeyword)}
+                          </span>
+                        </div>
+                      )}
+                      {entry.answer && (() => {
+                        const ptcStatus = decodeBase64(entry.answer);
+                        const statusMap: Record<string, string> = { completed: '已完成', failed: '失败', blocked: '已拦截', running: '运行中' };
+                        return (
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">状态:</span>
+                            <span>{statusMap[ptcStatus] || ptcStatus}</span>
+                          </div>
+                        );
+                      })()}
+                      {entry.latency && parseFloat(entry.latency) > 0 && (
+                        <div className="flex items-center gap-1">
+                          <span className="font-medium">耗时:</span>
+                          <span>{(parseFloat(entry.latency)).toFixed(2)}s</span>
+                        </div>
+                      )}
+                      {entry.llmRound === '1' && (
+                        <div className="flex items-center gap-1">
+                          <span className="font-medium text-red-500">失败</span>
                         </div>
                       )}
                     </>
@@ -735,6 +779,148 @@ export function ProcessTreeView({ logs, searchKeyword = '', filteredProcessTypes
                         <div className="flex items-center gap-2 bg-[var(--background)] p-3 rounded-lg">
                           <span className="text-base">📁</span>
                           <div className="text-[var(--foreground)] font-mono text-xs break-all">{decodeBase64(entry.answer)}</div>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : entry.dataType === 'TOOLCALL' ? (
+                  <>
+                    <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
+                      <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">基础信息</h5>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">日志ID</label>
+                          <div className="text-[var(--foreground)] font-mono text-xs">{entry.logID || 'N/A'}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">数据类型</label>
+                          <div className="text-[var(--foreground)]">{entry.dataType}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">会话创建时间</label>
+                          <div className="text-[var(--foreground)] font-mono text-xs">{entry.sessionCreatedAt}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">收集时间</label>
+                          <div className="text-[var(--foreground)] font-mono text-xs">{entry.collectTime}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
+                      <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">工具调用详情</h5>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">工具名称</label>
+                          <div className="text-[var(--foreground)] font-mono">{entry.toolName || 'N/A'}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">风险等级</label>
+                          <span className={`px-2 py-1 rounded-full text-xs ${getRiskLevelBgClass(entry.llmProvider || '')}`}>
+                            {entry.llmProvider || 'N/A'}
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">调用状态</label>
+                          {(() => {
+                            const ptcStatus = decodeBase64(entry.answer);
+                            const statusMap: Record<string, string> = { completed: '已完成', failed: '失败', blocked: '已拦截', running: '运行中' };
+                            return <span className="text-[var(--foreground)]">{statusMap[ptcStatus] || ptcStatus || 'N/A'}</span>;
+                          })()}
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">工具类型</label>
+                          <div className="text-[var(--foreground)]">{(() => {
+                            const idx = parseInt(entry.tokenCompletion);
+                            return !isNaN(idx) && idx >= 0 ? ['tool', 'command', 'patch', 'search', 'analysis', 'skill'][idx] || `未知(${idx})` : 'N/A';
+                          })()}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">耗时</label>
+                          <div className="text-[var(--foreground)]">{entry.latency ? `${(parseFloat(entry.latency)).toFixed(2)}s` : 'N/A'}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">是否错误</label>
+                          <div className={`text-[var(--foreground)] ${entry.llmRound === '1' ? 'text-red-500 font-semibold' : ''}`}>
+                            {entry.llmRound === '1' ? '是' : '否'}
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">是否技能调用</label>
+                          <div className="text-[var(--foreground)]">{entry.llmStream === '1' ? '是' : '否'}</div>
+                        </div>
+                        {entry.llmStream === '1' && entry.agentName && (
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-[var(--text-secondary)] block">技能名称</label>
+                            <div className="text-[var(--foreground)]">{entry.agentName}</div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
+                      <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">审批信息</h5>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">是否有审批</label>
+                          <div className="text-[var(--foreground)]">{entry.tokenTotal === '1' ? '是' : '否'}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-[var(--text-secondary)] block">审批状态</label>
+                          <div className="text-[var(--foreground)]">{(() => {
+                            const idx = parseInt(entry.tokenPrompt);
+                            return !isNaN(idx) ? ['无', '已批准', '已拒绝', '待审批'][idx] || `未知(${idx})` : 'N/A';
+                          })()}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {entry.toolInput && (
+                      <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
+                        <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">工具参数</h5>
+                        <div className="bg-[var(--background)] p-3 rounded-lg">
+                          <pre className="text-[var(--foreground)] font-mono text-xs whitespace-pre-wrap break-all">
+                            {(() => {
+                              try {
+                                return JSON.stringify(JSON.parse(entry.toolInput), null, 2);
+                              } catch {
+                                return entry.toolInput;
+                              }
+                            })()}
+                          </pre>
+                        </div>
+                      </div>
+                    )}
+
+                    {entry.thought && (() => {
+                      const ptcResult = decodeBase64(entry.thought);
+                      return ptcResult ? (
+                        <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
+                          <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">结果摘要</h5>
+                          <div className="bg-[var(--background)] p-3 rounded-lg">
+                            <pre className="text-[var(--foreground)] font-mono text-xs whitespace-pre-wrap break-all">{ptcResult}</pre>
+                          </div>
+                        </div>
+                      ) : null;
+                    })()}
+
+                    {entry.llmRound === '1' && entry.ragContent && (() => {
+                      const ptcError = decodeBase64(entry.ragContent);
+                      return ptcError ? (
+                        <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-3 border border-red-200 dark:border-red-800/30 shadow-sm">
+                          <h5 className="text-xs font-semibold text-red-500 mb-2.5 uppercase tracking-wider">错误信息</h5>
+                          <div className="bg-[var(--background)] p-3 rounded-lg">
+                            <pre className="text-red-700 dark:text-red-300 font-mono text-xs whitespace-pre-wrap break-all">{ptcError}</pre>
+                          </div>
+                        </div>
+                      ) : null;
+                    })()}
+
+                    {entry.parsedQuery && (
+                      <div className="bg-[var(--card-background)] rounded-xl p-3 border border-[var(--border-color)]/50 shadow-sm">
+                        <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-2.5 uppercase tracking-wider">调用描述</h5>
+                        <div className="bg-[var(--background)] p-3 rounded-lg">
+                          <p className="text-[var(--foreground)] text-xs whitespace-pre-wrap">{entry.parsedQuery}</p>
                         </div>
                       </div>
                     )}

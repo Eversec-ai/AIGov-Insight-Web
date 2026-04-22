@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "name": "cloud-aws",
+    "description": "AWS 云服务安全规则",
+    "version": "1.0"
+  },
+  "block": {
+    "aws s3 rb --force": "禁止强制删除 S3 存储桶",
+    "aws ec2 terminate-instances": "禁止终止 EC2 实例",
+    "aws rds delete-db-instance": "禁止删除 RDS 实例",
+    "aws lambda delete-function": "禁止删除 Lambda 函数",
+    "aws cloudformation delete-stack": "禁止删除 CloudFormation 堆栈",
+    "aws iam delete-user": "禁止删除 IAM 用户",
+    "aws iam delete-role": "禁止删除 IAM 角色",
+    "aws dynamodb delete-table": "禁止删除 DynamoDB 表"
+  },
+  "confirm": {
+    "aws s3 rm": "删除 S3 对象需要确认",
+    "aws s3api delete-bucket": "删除 S3 存储桶需要确认",
+    "aws ec2 stop-instances": "停止 EC2 实例需要确认",
+    "aws ec2 reboot-instances": "重启 EC2 实例需要确认",
+    "aws rds stop-db-instance": "停止 RDS 实例需要确认",
+    "aws lambda update-function-code": "更新 Lambda 代码需要确认",
+    "aws iam attach-role-policy": "附加角色策略需要确认",
+    "aws iam put-role-policy": "设置角色策略需要确认",
+    "aws kms schedule-key-deletion": "计划删除 KMS 密钥需要确认"
+  },
+  "warn": {
+    "AWS_ACCESS_KEY_ID": "警告：正在访问 AWS 访问密钥",
+    "AWS_SECRET_ACCESS_KEY": "警告：正在访问 AWS 秘密密钥",
+    "AKIA": "警告：正在访问 AWS 密钥 ID",
+    "aws s3 ls": "警告：正在列出 S3 存储桶",
+    "aws ec2 describe": "警告：正在查询 EC2 信息"
+  }
+}

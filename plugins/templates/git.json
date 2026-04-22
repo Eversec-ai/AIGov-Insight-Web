@@ -1,0 +1,31 @@
+{
+  "_meta": {
+    "name": "git",
+    "description": "Git 操作安全规则",
+    "version": "1.0"
+  },
+  "block": {
+    "git push --force main": "禁止强制推送到主分支",
+    "git push --force master": "禁止强制推送到主分支",
+    "git push -f main": "禁止强制推送到主分支",
+    "git push -f master": "禁止强制推送到主分支",
+    "git push --force origin main": "禁止强制推送到远程主分支",
+    "git push --force origin master": "禁止强制推送到远程主分支"
+  },
+  "confirm": {
+    "git push --force": "强制推送需要确认",
+    "git push -f": "强制推送需要确认",
+    "git reset --hard": "硬重置需要确认",
+    "git clean -fd": "清理未跟踪文件需要确认",
+    "git rebase": "变基操作需要确认",
+    "git checkout -- .": "丢弃所有工作区更改需要确认",
+    "git stash drop": "删除暂存需要确认",
+    "git branch -D": "强制删除分支需要确认",
+    "git tag -d": "删除标签需要确认"
+  },
+  "warn": {
+    "git push": "警告：正在推送代码",
+    "git merge": "警告：正在合并分支",
+    "git cherry-pick": "警告：正在挑选提交"
+  }
+}

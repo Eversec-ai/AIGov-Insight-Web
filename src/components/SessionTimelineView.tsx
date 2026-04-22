@@ -247,6 +247,15 @@ export function SessionTimelineView({ logs, targetSessionId, onViewLog }: Sessio
             displayName = `FILE ${filePath}`;
           }
         }
+      } else if (entry.dataType === 'TOOLCALL') {
+        const tcToolName = entry.toolName || '';
+        const tcQuery = entry.parsedQuery || '';
+        if (tcToolName && tcQuery) {
+          const shortQuery = tcQuery.length > 30 ? tcQuery.substring(0, 30) + '...' : tcQuery;
+          displayName = `🔧 ${tcToolName} - ${shortQuery}`;
+        } else if (tcToolName) {
+          displayName = `🔧 ${tcToolName}`;
+        }
       }
 
       const event: TimelineEvent = {
@@ -346,6 +355,7 @@ export function SessionTimelineView({ logs, targetSessionId, onViewLog }: Sessio
       case 'MCP': return '#eab308';
       case 'FILE': return '#eab308';
       case 'EXEC': return '#6366f1';
+      case 'TOOLCALL': return '#f59e0b';
       default: return '#6b7280';
     }
   };
@@ -1062,6 +1072,53 @@ export function SessionTimelineView({ logs, targetSessionId, onViewLog }: Sessio
                           </>
                         )}
 
+                        {hoveredEvent.type === 'TOOLCALL' && (
+                          <>
+                            {hoveredEvent.entry.toolName && (
+                              <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
+                                <div className="text-[var(--text-secondary)] mb-1">工具名称</div>
+                                <div className="text-[13px] font-mono text-[var(--foreground)]">{hoveredEvent.entry.toolName}</div>
+                              </div>
+                            )}
+                            {hoveredEvent.entry.llmProvider && (
+                              <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
+                                <div className="text-[var(--text-secondary)] mb-1">风险等级</div>
+                                <span className={`px-1.5 py-0.5 rounded-full text-[12px] ${hoveredEvent.entry.llmProvider === 'HIGH' ? 'bg-red-100 text-red-800' : hoveredEvent.entry.llmProvider === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' : hoveredEvent.entry.llmProvider === 'INFO' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
+                                  {hoveredEvent.entry.llmProvider}
+                                </span>
+                              </div>
+                            )}
+                            {hoveredEvent.entry.answer && (() => {
+                              const stcStatus = decodeBase64(hoveredEvent.entry.answer);
+                              const statusMap: Record<string, string> = { completed: '已完成', failed: '失败', blocked: '已拦截', running: '运行中' };
+                              return (
+                                <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
+                                  <div className="text-[var(--text-secondary)] mb-1">调用状态</div>
+                                  <div className="text-[13px] font-medium text-[var(--foreground)]">{statusMap[stcStatus] || stcStatus}</div>
+                                </div>
+                              );
+                            })()}
+                            {hoveredEvent.entry.parsedQuery && (
+                              <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
+                                <div className="text-[var(--text-secondary)] mb-1">调用描述</div>
+                                <div className="text-[13px] text-[var(--foreground)] break-all bg-[var(--hover-background)] p-1.5 rounded-md">{hoveredEvent.entry.parsedQuery}</div>
+                              </div>
+                            )}
+                            {hoveredEvent.entry.toolInput && (
+                              <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
+                                <div className="text-[var(--text-secondary)] mb-1">工具参数</div>
+                                <div className="text-[13px] font-mono text-[var(--foreground)] break-all bg-[var(--hover-background)] p-1.5 rounded-md max-h-20 overflow-y-auto">{hoveredEvent.entry.toolInput}</div>
+                              </div>
+                            )}
+                            {hoveredEvent.entry.latency && parseFloat(hoveredEvent.entry.latency) > 0 && (
+                              <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">
+                                <div className="text-[var(--text-secondary)] mb-1">耗时</div>
+                                <div className="text-[13px] font-medium text-[var(--foreground)]">{(parseFloat(hoveredEvent.entry.latency)).toFixed(2)}s</div>
+                              </div>
+                            )}
+                          </>
+                        )}
+
                         {hoveredEvent.type === 'FILE' && (
                           <>
                             {hoveredEvent.entry.answer && (
@@ -1264,7 +1321,7 @@ export function SessionTimelineView({ logs, targetSessionId, onViewLog }: Sessio
                           </>
                         )}
 
-                        {!['EXEC', 'FILE', 'OPENCLAW', 'LLM', 'HTTP', 'MCP', 'AG-UI'].includes(hoveredEvent.type) && (
+                        {!['EXEC', 'FILE', 'OPENCLAW', 'LLM', 'HTTP', 'MCP', 'AG-UI', 'TOOLCALL'].includes(hoveredEvent.type) && (
                           <>
                             <div className="grid grid-cols-2 gap-2">
                               <div className="bg-[var(--background)]/50 rounded-lg p-2 border border-[var(--border-color)]/30">

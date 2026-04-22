@@ -24,6 +24,7 @@ interface TreeViewProps {
       'AG-UI': boolean;
       'FILE': boolean;
       'EXEC': boolean;
+      'TOOLCALL': boolean;
       'OPENCLAW': boolean;
       'UNKNOWN': boolean;
     };
@@ -622,6 +623,38 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
         const argc = entry.tokenTotal || '未知';
         return `执行命令 ${execCmd}，路径: ${execPath}，参数数量: ${argc} ${execRiskDesc}`;
       
+      case 'TOOLCALL':
+        const tcToolName = entry.toolName || '未知工具';
+        const tcStatus = decodeBase64(entry.answer);
+        const tcRiskLevel = entry.llmProvider || '';
+        const tcRiskDesc = tcRiskLevel === 'HIGH' ? '（高风险）' : tcRiskLevel === 'MEDIUM' ? '（中风险）' : tcRiskLevel === 'LOW' ? '（低风险）' : '';
+        const tcStatusMap: Record<string, string> = { completed: '已完成', failed: '失败', blocked: '已拦截', running: '运行中' };
+        const tcStatusText = tcStatusMap[tcStatus] || tcStatus || '未知';
+        const tcToolTypeIdx = parseInt(entry.tokenCompletion);
+        const tcToolType = !isNaN(tcToolTypeIdx) && tcToolTypeIdx >= 0 ? ['tool', 'command', 'patch', 'search', 'analysis', 'skill'][tcToolTypeIdx] : '';
+        const tcIsSkill = entry.llmStream === '1';
+        const tcSkillName = tcIsSkill ? entry.agentName : '';
+        const tcIsError = entry.llmRound === '1';
+        const tcLatency = entry.latency ? `${(parseFloat(entry.latency)).toFixed(2)}s` : '';
+        const tcQuery = entry.parsedQuery || '';
+        
+        let tcDesc = `调用工具 ${tcToolName}`;
+        if (tcToolType) tcDesc += ` (${tcToolType})`;
+        if (tcQuery) {
+          const shortQ = tcQuery.length > 30 ? tcQuery.substring(0, 30) + '...' : tcQuery;
+          tcDesc += `，${shortQ}`;
+        }
+        tcDesc += `，状态: ${tcStatusText}`;
+        if (tcLatency) tcDesc += `，耗时: ${tcLatency}`;
+        if (tcIsSkill && tcSkillName) tcDesc += `，技能: ${tcSkillName}`;
+        if (tcIsError) {
+          const tcError = decodeBase64(entry.ragContent);
+          if (tcError) tcDesc += `，错误: ${tcError.length > 30 ? tcError.substring(0, 30) + '...' : tcError}`;
+          else tcDesc += `，执行失败`;
+        }
+        tcDesc += ` ${tcRiskDesc}`;
+        return tcDesc;
+      
       case 'OPENCLAW':
         // 解析OPENCLAW的payload，提取method信息
         const openclawMethods = parseOpenClawMethods(entry.parsedReqPayload || '');
@@ -794,7 +827,7 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
     let description = '';
     let type: 'block' | 'confirm' | 'warn' = 'warn';
     
-    if (entry.dataType === 'FILE' || entry.dataType === 'EXEC') {
+    if (entry.dataType === 'FILE' || entry.dataType === 'EXEC' || entry.dataType === 'TOOLCALL') {
       type = entry.llmProvider === 'HIGH' ? 'block' : entry.llmProvider === 'MEDIUM' ? 'confirm' : 'warn';
     }
 
@@ -843,6 +876,17 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
           pattern = 'File Operation';
         }
         description = `文件访问防护 - ${entry.pName || '未知进程'}: ${pattern.substring(0, 30)}${pattern.length > 30 ? '...' : ''}`;
+        break;
+      
+      case 'TOOLCALL':
+        pattern = entry.toolName || '';
+        if (!pattern && entry.parsedQuery) {
+          pattern = entry.parsedQuery;
+        }
+        if (!pattern) {
+          pattern = 'Tool Call';
+        }
+        description = `工具调用防护 - ${entry.toolName || '未知工具'}: ${pattern.substring(0, 30)}${pattern.length > 30 ? '...' : ''}`;
         break;
       
       case 'HTTP':
@@ -966,7 +1010,7 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
       return null;
     }
     
-    if (entry.dataType === 'FILE' || entry.dataType === 'EXEC') {
+    if (entry.dataType === 'FILE' || entry.dataType === 'EXEC' || entry.dataType === 'TOOLCALL') {
       if (entry.llmProvider && !currentFilterConditions.riskLevels[entry.llmProvider as keyof typeof currentFilterConditions.riskLevels]) {
         return null;
       }
@@ -1102,6 +1146,18 @@ export function TreeView({ logs, targetSessionId, filterConditions, onTypeFilter
             return `${entry.pName}`;
           }
           return 'Command Execution';
+        case 'TOOLCALL':
+          const tcTitleToolName = entry.toolName || '未知工具';
+          const tcTitleStatus = decodeBase64(entry.answer) || '';
+          const tcTitleQuery = entry.parsedQuery || '';
+          if (tcTitleQuery) {
+            const shortQuery = tcTitleQuery.length > 60 ? tcTitleQuery.substring(0, 60) + '...' : tcTitleQuery;
+            return `${tcTitleToolName} - ${shortQuery}`;
+          }
+          if (tcTitleStatus) {
+            return `${tcTitleToolName} [${tcTitleStatus}]`;
+          }
+          return `${tcTitleToolName} 工具调用`;
         case 'OPENCLAW':
           // 解析OPENCLAW的payload，提取method信息
           const titleMethods = parseOpenClawMethods(parsedReqPayload);

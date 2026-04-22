@@ -1,0 +1,27 @@
+{
+  "_meta": {
+    "name": "docker",
+    "description": "Docker 容器安全规则",
+    "version": "1.0"
+  },
+  "block": {
+    "docker system prune -a --volumes": "禁止清理所有容器和卷",
+    "docker rm -f $(docker ps -aq)": "禁止强制删除所有容器"
+  },
+  "confirm": {
+    "docker rm": "删除容器需要确认",
+    "docker rmi": "删除镜像需要确认",
+    "docker volume rm": "删除数据卷需要确认",
+    "docker network rm": "删除网络需要确认",
+    "docker container prune": "清理停止的容器需要确认",
+    "docker image prune -a": "清理所有未使用镜像需要确认",
+    "docker volume prune": "清理未使用的数据卷需要确认",
+    "docker swarm leave": "离开 Swarm 集群需要确认",
+    "docker stack rm": "删除 Stack 需要确认"
+  },
+  "warn": {
+    "docker exec": "警告：正在容器内执行命令",
+    "docker run --privileged": "警告：正在运行特权容器",
+    "docker run -v /": "警告：正在挂载根目录"
+  }
+}

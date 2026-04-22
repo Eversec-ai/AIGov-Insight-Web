@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "name": "filesystem",
+    "description": "文件系统安全规则，保护关键文件和目录",
+    "version": "1.0"
+  },
+  "block": {
+    "/etc/passwd": "禁止访问系统密码文件",
+    "/etc/shadow": "禁止访问系统影子文件",
+    "/etc/sudoers": "禁止访问 sudo 配置",
+    "/root/.ssh/": "禁止访问 root SSH 密钥目录",
+    "~/.ssh/id_rsa": "禁止访问 SSH 私钥",
+    "rm -rf /": "禁止删除根目录",
+    "rm -rf /*": "禁止删除根目录所有文件",
+    "mkfs": "禁止格式化磁盘",
+    "dd if=/dev/zero": "禁止磁盘清零操作",
+    "> /dev/sda": "禁止直接写入磁盘设备"
+  },
+  "confirm": {
+    "rm -rf": "递归强制删除需要确认",
+    "rm ": "删除文件需要确认",
+    "chmod 777": "设置完全开放权限需要确认",
+    "chown root": "更改所有者为 root 需要确认",
+    "mv /etc/": "移动系统配置文件需要确认"
+  },
+  "warn": {
+    ".env": "警告：正在访问环境变量文件",
+    "credentials": "警告：正在访问凭证文件",
+    "secrets": "警告：正在访问密钥文件",
+    "private_key": "警告：正在访问私钥",
+    ".pem": "警告：正在访问 PEM 证书",
+    ".key": "警告：正在访问密钥文件",
+    "/var/log/": "警告：正在访问系统日志"
+  }
+}
