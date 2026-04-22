@@ -62,11 +62,11 @@ export async function GET(request: NextRequest) {
     let AGUIRequestCount = 0;
 
     let filesToProcess = logFiles;
-    
+
     if (startTime && endTime) {
       const startTimeMs = startTime.getTime();
       const endTimeMs = endTime.getTime();
-      
+
       filesToProcess = [];
       for (const file of logFiles) {
         const fileTime = parseTimeFromFilename(file);
@@ -91,9 +91,9 @@ export async function GET(request: NextRequest) {
             return;
           }
         }
-        
+
         stats.totalRequests++;
-        
+
         let dataType = log.dataType || 'UNKNOWN';
         if (dataType === 'UNKNOW') {
           dataType = 'UNKNOWN';
@@ -112,7 +112,7 @@ export async function GET(request: NextRequest) {
           sessions.add(log.session);
         }
 
-        if (dataType && dataType == 'AG-UI') {
+        if (dataType && (dataType === 'AG-UI' || dataType === 'OPENCLAW')) {
           AGUIRequestCount++;
         }
 

@@ -587,6 +587,56 @@ export const buildTopologyData = (session: AggregatedSession): TopologyData => {
         label: `OPENCLAW :${sourcePort}→:${destPort}`,
         protocol: 'OPENCLAW'
       });
+    } else if (dataType === 'TOOLCALL') {
+      const sourceNodeId = `${sourceIp}:${sourcePort}`;
+      const destNodeId = `${destIp}:${destPort}`;
+
+      if (!nodes.has(sourceNodeId)) {
+        nodes.set(sourceNodeId, {
+          id: sourceNodeId,
+          type: 'server',
+          label: `${sourceIp}:${sourcePort}`,
+          ip: sourceIp,
+          port: sourcePort,
+          x: 0,
+          y: 0,
+          entries: [entry]
+        });
+      } else {
+        const node = nodes.get(sourceNodeId)!;
+        if (!node.entries.find(e => e.logID === entry.logID)) {
+          node.entries.push(entry);
+        }
+      }
+
+      if (!nodes.has(destNodeId)) {
+        nodes.set(destNodeId, {
+          id: destNodeId,
+          type: 'server',
+          label: `${destIp}:${destPort}`,
+          ip: destIp,
+          port: destPort,
+          x: 0,
+          y: 0,
+          entries: [entry]
+        });
+      } else {
+        const node = nodes.get(destNodeId)!;
+        if (!node.entries.find(e => e.logID === entry.logID)) {
+          node.entries.push(entry);
+        }
+      }
+
+      const tcToolName = entry.toolName || 'tool';
+      connections.push({
+        id: `conn-${entry.logID}`,
+        type: 'toolcall',
+        sourceId: sourceNodeId,
+        targetId: destNodeId,
+        entry,
+        label: `🔧 ${tcToolName}`,
+        protocol: 'TOOLCALL'
+      });
     }
   });
 
@@ -661,6 +711,8 @@ export const getConnectionTypeColor = (type: ConnectionType): string => {
       return '#f97316';
     case 'openclaw':
       return '#a855f7';
+    case 'toolcall':
+      return '#f59e0b';
     default:
       return '#6b7280';
   }

@@ -1,0 +1,42 @@
+{
+  "_meta": {
+    "name": "production-strict",
+    "description": "生产环境严格安全规则",
+    "version": "1.0"
+  },
+  "block": {
+    "rm -rf /": "禁止删除根目录",
+    "rm -rf /*": "禁止删除根目录所有文件",
+    "mkfs": "禁止格式化磁盘",
+    "dd if=/dev/zero": "禁止磁盘清零操作",
+    "/etc/passwd": "禁止访问系统密码文件",
+    "/etc/shadow": "禁止访问系统影子文件",
+    "/root/.ssh/": "禁止访问 root SSH 密钥",
+    "DROP TABLE": "禁止删除数据表",
+    "DROP DATABASE": "禁止删除数据库",
+    "TRUNCATE TABLE": "禁止清空数据表",
+    "kubectl delete namespace kube-system": "禁止删除系统命名空间",
+    "aws s3 rb --force": "禁止强制删除 S3 存储桶",
+    "git push --force main": "禁止强制推送到主分支"
+  },
+  "confirm": {
+    "rm ": "删除文件需要确认",
+    "DROP": "数据库删除操作需要确认",
+    "DELETE FROM": "数据删除操作需要确认",
+    "kubectl delete": "Kubernetes 删除操作需要确认",
+    "docker rm": "删除容器需要确认",
+    "docker rmi": "删除镜像需要确认",
+    "git push --force": "强制推送需要确认",
+    "aws delete": "AWS 删除操作需要确认",
+    "terraform destroy": "销毁基础设施需要确认"
+  },
+  "warn": {
+    ".env": "警告：正在访问环境变量文件",
+    "credentials": "警告：正在访问凭证文件",
+    "secrets": "警告：正在访问密钥文件",
+    "private_key": "警告：正在访问私钥",
+    "password": "警告：正在访问密码",
+    "api_key": "警告：正在访问 API 密钥",
+    "token": "警告：正在访问令牌"
+  }
+}

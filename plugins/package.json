@@ -1,0 +1,28 @@
+{
+  "name": "aigov-insight",
+  "version": "1.0.0",
+  "description": "AIGov-Insight - 智能体安全治理插件，为 OpenClaw 提供轻量级安全规则引擎",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "security",
+    "aigov",
+    "insight",
+    "standalone"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "dependencies": {}
+}

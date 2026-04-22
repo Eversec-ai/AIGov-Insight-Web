@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "name": "database-sql",
+    "description": "数据库 SQL 安全规则，防止危险 SQL 操作",
+    "version": "1.0"
+  },
+  "block": {
+    "DROP TABLE": "禁止删除数据表",
+    "DROP DATABASE": "禁止删除数据库",
+    "DROP SCHEMA": "禁止删除 Schema",
+    "TRUNCATE TABLE": "禁止清空数据表",
+    "DROP USER": "禁止删除数据库用户",
+    "DROP ROLE": "禁止删除角色",
+    "FLUSH PRIVILEGES": "禁止刷新权限",
+    "RESET MASTER": "禁止重置主库"
+  },
+  "confirm": {
+    "DELETE FROM": "数据删除操作需要确认",
+    "UPDATE .* SET": "数据更新操作需要确认",
+    "ALTER TABLE": "表结构修改需要确认",
+    "DROP INDEX": "删除索引需要确认",
+    "DROP VIEW": "删除视图需要确认"
+  },
+  "warn": {
+    "DATABASE_URL": "警告：正在访问数据库连接字符串",
+    "DB_PASSWORD": "警告：正在访问数据库密码",
+    "MYSQL_ROOT_PASSWORD": "警告：正在访问 MySQL root 密码",
+    "POSTGRES_PASSWORD": "警告：正在访问 PostgreSQL 密码"
+  }
+}

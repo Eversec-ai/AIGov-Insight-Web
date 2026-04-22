@@ -285,6 +285,18 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
           return `${entry.pName}`;
         }
         return 'Command Execution';
+      case 'TOOLCALL':
+        const tcToolName = entry.toolName || '未知工具';
+        const tcStatus = decodeBase64(entry.answer) || '';
+        const tcQuery = entry.parsedQuery || '';
+        if (tcQuery) {
+          const shortQuery = tcQuery.length > 60 ? tcQuery.substring(0, 60) + '...' : tcQuery;
+          return `${tcToolName} - ${shortQuery}`;
+        }
+        if (tcStatus) {
+          return `${tcToolName} [${tcStatus}]`;
+        }
+        return `${tcToolName} 工具调用`;
       case 'OPENCLAW':
         // 解析OPENCLAW的payload，提取method信息
         const reqMethods = parseOpenClawMethods(parsedReqPayload);
@@ -389,9 +401,26 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
         }
       }
       
-      // 添加usage信息
-      if (vllmDescInfo.usage) {
-        parts.push(`Token: ${vllmDescInfo.usage.prompt_tokens}+${vllmDescInfo.usage.completion_tokens}=${vllmDescInfo.usage.total_tokens}`);
+      // 添加usage信息 - 从响应payload解析或从entry字段获取
+      let promptTokens = vllmDescInfo.usage?.prompt_tokens || 0;
+      let completionTokens = vllmDescInfo.usage?.completion_tokens || 0;
+      let totalTokens = vllmDescInfo.usage?.total_tokens || 0;
+      
+      // 如果payload中没有，尝试从entry的llmToken字段获取
+      if (!promptTokens && entry.llmTokenPrompt) {
+        promptTokens = parseInt(entry.llmTokenPrompt) || 0;
+      }
+      if (!completionTokens && entry.llmTokenCompletion) {
+        completionTokens = parseInt(entry.llmTokenCompletion) || 0;
+      }
+      if (!totalTokens && entry.llmTokenTotal) {
+        totalTokens = parseInt(entry.llmTokenTotal) || 0;
+      }
+      
+      // 只要有值就显示
+      if (totalTokens || promptTokens || completionTokens) {
+        const finalTotal = totalTokens || (promptTokens + completionTokens);
+        parts.push(`Token: ${promptTokens}+${completionTokens}=${finalTotal}`);
       }
       
       // 添加finish_reason
@@ -464,6 +493,47 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
         }
       }
       
+      return parts.join(' | ');
+    }
+    if (entry.dataType === 'TOOLCALL') {
+      const parts = [];
+      const tcStatus = decodeBase64(entry.answer) || '';
+      const tcRiskLevel = entry.llmProvider || '';
+      const tcToolType = entry.tokenCompletion ? ['tool', 'command', 'patch', 'search', 'analysis', 'skill'][parseInt(entry.tokenCompletion)] || '' : '';
+      const tcIsSkill = entry.llmStream === '1';
+      const tcHasApproval = entry.tokenTotal === '1';
+      const tcApprovalStatus = entry.tokenPrompt ? ['无', '已批准', '已拒绝', '待审批'][parseInt(entry.tokenPrompt)] || '' : '';
+      const tcIsError = entry.llmRound === '1';
+      const tcLatency = entry.latency ? `${(parseFloat(entry.latency)).toFixed(2)}s` : '';
+
+      if (tcRiskLevel) {
+        parts.push(`风险: ${tcRiskLevel}`);
+      }
+      if (tcStatus) {
+        const statusMap: Record<string, string> = { completed: '已完成', failed: '失败', blocked: '已拦截', running: '运行中' };
+        parts.push(`状态: ${statusMap[tcStatus] || tcStatus}`);
+      }
+      if (tcToolType) {
+        parts.push(`类型: ${tcToolType}`);
+      }
+      if (tcIsSkill && entry.agentName) {
+        parts.push(`技能: ${entry.agentName}`);
+      }
+      if (tcHasApproval) {
+        parts.push(`审批: ${tcApprovalStatus || '有'}`);
+      }
+      if (tcLatency) {
+        parts.push(`耗时: ${tcLatency}`);
+      }
+      if (tcIsError) {
+        const tcErrorMsg = decodeBase64(entry.ragContent) || '';
+        if (tcErrorMsg) {
+          const shortErr = tcErrorMsg.length > 30 ? tcErrorMsg.substring(0, 30) + '...' : tcErrorMsg;
+          parts.push(`错误: ${shortErr}`);
+        } else {
+          parts.push('执行失败');
+        }
+      }
       return parts.join(' | ');
     }
     if (entry.dataType === 'OPENCLAW') {
@@ -634,6 +704,62 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
                   <div className="flex items-center gap-1 truncate max-w-xs" title={decodeBase64(entry.answer)}>
                     <span className="font-medium">路径:</span>
                     <span className="truncate font-mono text-xs">{decodeBase64(entry.answer)}</span>
+                  </div>
+                )}
+              </>
+            ) : entry.dataType === 'TOOLCALL' ? (
+              <>
+                {entry.llmProvider && (
+                  <div className="flex items-center gap-1">
+                    <span className="font-medium">风险:</span>
+                    <span className={`px-1.5 py-0.5 rounded-full ${getRiskLevelBgClass(entry.llmProvider)}`}>
+                      {entry.llmProvider}
+                    </span>
+                  </div>
+                )}
+                {entry.answer && (() => {
+                  const tcStatus = decodeBase64(entry.answer);
+                  const statusMap: Record<string, string> = { completed: '已完成', failed: '失败', blocked: '已拦截', running: '运行中' };
+                  const statusColorMap: Record<string, string> = { completed: 'bg-green-100 text-green-800', failed: 'bg-red-100 text-red-800', blocked: 'bg-red-100 text-red-800', running: 'bg-blue-100 text-blue-800' };
+                  return (
+                    <div className="flex items-center gap-1">
+                      <span className="font-medium">状态:</span>
+                      <span className={`px-1.5 py-0.5 rounded-full ${statusColorMap[tcStatus] || 'bg-gray-100 text-gray-800'}`}>
+                        {statusMap[tcStatus] || tcStatus}
+                      </span>
+                    </div>
+                  );
+                })()}
+                {entry.tokenCompletion && parseInt(entry.tokenCompletion) > 0 && (() => {
+                  const tcToolType = ['tool', 'command', 'patch', 'search', 'analysis', 'skill'][parseInt(entry.tokenCompletion)];
+                  return tcToolType ? (
+                    <div className="flex items-center gap-1">
+                      <span className="font-medium">类型:</span>
+                      <span>{tcToolType}</span>
+                    </div>
+                  ) : null;
+                })()}
+                {entry.llmStream === '1' && entry.agentName && (
+                  <div className="flex items-center gap-1">
+                    <span className="font-medium">技能:</span>
+                    <span>{entry.agentName}</span>
+                  </div>
+                )}
+                {entry.latency && parseFloat(entry.latency) > 0 && (
+                  <div className="flex items-center gap-1">
+                    <span className="font-medium">耗时:</span>
+                    <span>{(parseFloat(entry.latency)).toFixed(2)}s</span>
+                  </div>
+                )}
+                {entry.llmRound === '1' && (
+                  <div className="flex items-center gap-1">
+                    <span className="font-medium text-red-500">失败</span>
+                  </div>
+                )}
+                {entry.tokenTotal === '1' && (
+                  <div className="flex items-center gap-1">
+                    <span className="font-medium">审批:</span>
+                    <span>{entry.tokenPrompt ? ['无', '已批准', '已拒绝', '待审批'][parseInt(entry.tokenPrompt)] || '' : '有'}</span>
                   </div>
                 )}
               </>
@@ -865,6 +991,193 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
                 </div>
               </div>
             </>
+          ) : entry.dataType === 'TOOLCALL' ? (
+            <>
+              <div className="mb-6">
+                <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-3 uppercase tracking-wider">基础信息</h5>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">日志ID</p>
+                    <p className="text-[var(--foreground)] font-mono text-xs">{entry.logID || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">数据类型</p>
+                    <p className="text-[var(--foreground)]">{entry.dataType}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">会话创建时间</p>
+                    <p className="text-[var(--foreground)] font-mono text-xs">{entry.sessionCreatedAt}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">收集时间</p>
+                    <p className="text-[var(--foreground)] font-mono text-xs">{entry.collectTime}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mb-6">
+                <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-3 uppercase tracking-wider">工具调用详情</h5>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">工具名称</p>
+                    <p className="text-[var(--foreground)] font-mono">{entry.toolName || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">风险等级</p>
+                    <span className={`px-2 py-1 rounded-full text-sm font-medium ${getRiskLevelBgClass(entry.llmProvider || '')}`}>
+                      {entry.llmProvider || 'N/A'}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">调用状态</p>
+                    {(() => {
+                      const tcStatus = decodeBase64(entry.answer);
+                      const statusMap: Record<string, string> = { completed: '已完成', failed: '失败', blocked: '已拦截', running: '运行中' };
+                      const statusColorMap: Record<string, string> = { completed: 'bg-green-100 text-green-800', failed: 'bg-red-100 text-red-800', blocked: 'bg-red-100 text-red-800', running: 'bg-blue-100 text-blue-800' };
+                      return <span className={`px-2 py-1 rounded-full text-sm ${statusColorMap[tcStatus] || 'bg-gray-100 text-gray-800'}`}>{statusMap[tcStatus] || tcStatus || 'N/A'}</span>;
+                    })()}
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">工具类型</p>
+                    <p className="text-[var(--foreground)]">{(() => {
+                      const idx = parseInt(entry.tokenCompletion);
+                      return !isNaN(idx) && idx >= 0 ? ['tool', 'command', 'patch', 'search', 'analysis', 'skill'][idx] || `未知(${idx})` : 'N/A';
+                    })()}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">耗时</p>
+                    <p className="text-[var(--foreground)]">{entry.latency ? `${(parseFloat(entry.latency)).toFixed(2)}s` : 'N/A'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">是否错误</p>
+                    <p className={`text-[var(--foreground)] ${entry.llmRound === '1' ? 'text-red-500 font-semibold' : ''}`}>
+                      {entry.llmRound === '1' ? '是' : '否'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">是否技能调用</p>
+                    <p className="text-[var(--foreground)]">{entry.llmStream === '1' ? '是' : '否'}</p>
+                  </div>
+                  {entry.llmStream === '1' && entry.agentName && (
+                    <div>
+                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">技能名称</p>
+                      <p className="text-[var(--foreground)]">{entry.agentName}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="mb-6">
+                <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-3 uppercase tracking-wider">审批信息</h5>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">是否有审批</p>
+                    <p className="text-[var(--foreground)]">{entry.tokenTotal === '1' ? '是' : '否'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">审批状态</p>
+                    <p className="text-[var(--foreground)]">{(() => {
+                      const idx = parseInt(entry.tokenPrompt);
+                      return !isNaN(idx) ? ['无', '已批准', '已拒绝', '待审批'][idx] || `未知(${idx})` : 'N/A';
+                    })()}</p>
+                  </div>
+                </div>
+              </div>
+
+              {entry.toolInput && (
+                <div className="mb-6">
+                  <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-3 uppercase tracking-wider">工具参数</h5>
+                  <div className="bg-[var(--card-background)] p-4 rounded-lg border border-[var(--border-color)]/30">
+                    <pre className="text-[var(--foreground)] font-mono text-sm whitespace-pre-wrap break-all">
+                      {(() => {
+                        try {
+                          return JSON.stringify(JSON.parse(entry.toolInput), null, 2);
+                        } catch {
+                          return entry.toolInput;
+                        }
+                      })()}
+                    </pre>
+                  </div>
+                </div>
+              )}
+
+              {entry.thought && (() => {
+                const tcResult = decodeBase64(entry.thought);
+                return tcResult ? (
+                  <div className="mb-6">
+                    <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-3 uppercase tracking-wider">结果摘要</h5>
+                    <div className="bg-[var(--card-background)] p-4 rounded-lg border border-[var(--border-color)]/30">
+                      <pre className="text-[var(--foreground)] font-mono text-sm whitespace-pre-wrap break-all">{tcResult}</pre>
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+
+              {entry.llmRound === '1' && entry.ragContent && (() => {
+                const tcError = decodeBase64(entry.ragContent);
+                return tcError ? (
+                  <div className="mb-6">
+                    <h5 className="text-xs font-semibold text-red-500 mb-3 uppercase tracking-wider">错误信息</h5>
+                    <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-lg border border-red-200 dark:border-red-800/30">
+                      <pre className="text-red-700 dark:text-red-300 font-mono text-sm whitespace-pre-wrap break-all">{tcError}</pre>
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+
+              {entry.parsedQuery && (
+                <div className="mb-6">
+                  <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-3 uppercase tracking-wider">调用描述</h5>
+                  <div className="bg-[var(--card-background)] p-4 rounded-lg border border-[var(--border-color)]/30">
+                    <p className="text-[var(--foreground)] text-sm whitespace-pre-wrap">{entry.parsedQuery}</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="mb-6">
+                <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-3 uppercase tracking-wider">会话与进程</h5>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  {entry.session && (
+                    <div>
+                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">会话ID</p>
+                      <p className="text-[var(--foreground)] font-mono text-xs">{entry.session}</p>
+                    </div>
+                  )}
+                  {entry.messageID && (
+                    <div>
+                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">调用ID</p>
+                      <p className="text-[var(--foreground)] font-mono text-xs">{entry.messageID}</p>
+                    </div>
+                  )}
+                  {entry.pid && (
+                    <div>
+                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">进程ID</p>
+                      <p className="text-[var(--foreground)]">{entry.pid}</p>
+                    </div>
+                  )}
+                  {entry.pName && (
+                    <div>
+                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">进程名</p>
+                      <p className="text-[var(--foreground)]">{entry.pName}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-3 uppercase tracking-wider">网络信息</h5>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">请求IP:Port</p>
+                    <p className="text-[var(--foreground)] font-mono text-xs">{entry.reqIp}:{entry.reqPort}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">响应IP:Port</p>
+                    <p className="text-[var(--foreground)] font-mono text-xs">{entry.respIp}:{entry.respPort}</p>
+                  </div>
+                </div>
+              </div>
+            </>
           ) : entry.dataType === 'OPENCLAW' ? (
             <>
               {/* OPENCLAW类型专用展示 */}
@@ -979,26 +1292,34 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
                 </div>
               )}
 
-              {/* Token相关信息 */}
-              {(entry.tokenTotal || entry.tokenPrompt || entry.tokenCompletion) && (
+              {/* Token相关信息 - 只显示有值的字段 */}
+              {(entry.tokenTotal && parseInt(entry.tokenTotal) > 0) ||
+               (entry.tokenPrompt && parseInt(entry.tokenPrompt) > 0) ||
+               (entry.tokenCompletion && parseInt(entry.tokenCompletion) > 0) ? (
                 <div className="mb-6">
                   <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-3 uppercase tracking-wider">Token信息</h5>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">总Token</p>
-                      <p className="text-[var(--foreground)]">{formatTokens(entry.tokenTotal)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">提示词Token</p>
-                      <p className="text-[var(--foreground)]">{formatTokens(entry.tokenPrompt)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">生成Token</p>
-                      <p className="text-[var(--foreground)]">{formatTokens(entry.tokenCompletion)}</p>
-                    </div>
+                    {entry.tokenTotal && parseInt(entry.tokenTotal) > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">总Token</p>
+                        <p className="text-[var(--foreground)]">{formatTokens(entry.tokenTotal)}</p>
+                      </div>
+                    )}
+                    {entry.tokenPrompt && parseInt(entry.tokenPrompt) > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">提示词Token</p>
+                        <p className="text-[var(--foreground)]">{formatTokens(entry.tokenPrompt)}</p>
+                      </div>
+                    )}
+                    {entry.tokenCompletion && parseInt(entry.tokenCompletion) > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">生成Token</p>
+                        <p className="text-[var(--foreground)]">{formatTokens(entry.tokenCompletion)}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
-              )}
+              ) : null}
 
               {/* 工具使用 */}
               {entry.toolName && (
@@ -1218,55 +1539,76 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
                 </div>
               )}
 
-              {/* Token相关信息 */}
-              {(entry.tokenTotal || entry.historyTokenTotal || entry.llmTokenTotal) && (
+              {/* Token相关信息 - 只显示有值的字段 */}
+              {(entry.tokenTotal && parseInt(entry.tokenTotal) > 0) ||
+               (entry.tokenPrompt && parseInt(entry.tokenPrompt) > 0) ||
+               (entry.tokenCompletion && parseInt(entry.tokenCompletion) > 0) ||
+               (entry.historyTokenTotal && parseInt(entry.historyTokenTotal) > 0) ||
+               (entry.historyTokenPrompt && parseInt(entry.historyTokenPrompt) > 0) ||
+               (entry.historyTokenCompletion && parseInt(entry.historyTokenCompletion) > 0) ||
+               (entry.llmTokenTotal && parseInt(entry.llmTokenTotal) > 0) ||
+               (entry.llmTokenPrompt && parseInt(entry.llmTokenPrompt) > 0) ||
+               (entry.llmTokenCompletion && parseInt(entry.llmTokenCompletion) > 0) ? (
                 <div className="mb-6">
                   <h5 className="text-xs font-semibold text-[var(--accent-blue)] mb-3 uppercase tracking-wider">Token信息</h5>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">本轮总Token</p>
-                      <p className="text-[var(--foreground)]">{formatTokens(entry.tokenTotal)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">本轮提示词Token</p>
-                      <p className="text-[var(--foreground)]">{formatTokens(entry.tokenPrompt)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">本轮生成Token</p>
-                      <p className="text-[var(--foreground)]">{formatTokens(entry.tokenCompletion)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">历史总Token</p>
-                      <p className="text-[var(--foreground)]">{formatTokens(entry.historyTokenTotal)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">历史提示词Token</p>
-                      <p className="text-[var(--foreground)]">{formatTokens(entry.historyTokenPrompt)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">历史生成Token</p>
-                      <p className="text-[var(--foreground)]">{formatTokens(entry.historyTokenCompletion)}</p>
-                    </div>
-                    {/* LLM特定Token信息 */}
-                    {entry.llmTokenTotal && (
-                      <>
-                        <div>
-                          <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">LLM总Token</p>
-                          <p className="text-[var(--foreground)]">{formatTokens(entry.llmTokenTotal)}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">LLM提示词Token</p>
-                          <p className="text-[var(--foreground)]">{formatTokens(entry.llmTokenPrompt)}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">LLM生成Token</p>
-                          <p className="text-[var(--foreground)]">{formatTokens(entry.llmTokenCompletion)}</p>
-                        </div>
-                      </>
+                    {entry.tokenTotal && parseInt(entry.tokenTotal) > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">本轮总Token</p>
+                        <p className="text-[var(--foreground)]">{formatTokens(entry.tokenTotal)}</p>
+                      </div>
+                    )}
+                    {entry.tokenPrompt && parseInt(entry.tokenPrompt) > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">本轮提示词Token</p>
+                        <p className="text-[var(--foreground)]">{formatTokens(entry.tokenPrompt)}</p>
+                      </div>
+                    )}
+                    {entry.tokenCompletion && parseInt(entry.tokenCompletion) > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">本轮生成Token</p>
+                        <p className="text-[var(--foreground)]">{formatTokens(entry.tokenCompletion)}</p>
+                      </div>
+                    )}
+                    {entry.historyTokenTotal && parseInt(entry.historyTokenTotal) > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">历史总Token</p>
+                        <p className="text-[var(--foreground)]">{formatTokens(entry.historyTokenTotal)}</p>
+                      </div>
+                    )}
+                    {entry.historyTokenPrompt && parseInt(entry.historyTokenPrompt) > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">历史提示词Token</p>
+                        <p className="text-[var(--foreground)]">{formatTokens(entry.historyTokenPrompt)}</p>
+                      </div>
+                    )}
+                    {entry.historyTokenCompletion && parseInt(entry.historyTokenCompletion) > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">历史生成Token</p>
+                        <p className="text-[var(--foreground)]">{formatTokens(entry.historyTokenCompletion)}</p>
+                      </div>
+                    )}
+                    {entry.llmTokenTotal && parseInt(entry.llmTokenTotal) > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">LLM总Token</p>
+                        <p className="text-[var(--foreground)]">{formatTokens(entry.llmTokenTotal)}</p>
+                      </div>
+                    )}
+                    {entry.llmTokenPrompt && parseInt(entry.llmTokenPrompt) > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">LLM提示词Token</p>
+                        <p className="text-[var(--foreground)]">{formatTokens(entry.llmTokenPrompt)}</p>
+                      </div>
+                    )}
+                    {entry.llmTokenCompletion && parseInt(entry.llmTokenCompletion) > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">LLM生成Token</p>
+                        <p className="text-[var(--foreground)]">{formatTokens(entry.llmTokenCompletion)}</p>
+                      </div>
                     )}
                   </div>
                 </div>
-              )}
+              ) : null}
 
               {/* 延迟相关信息 */}
               {(entry.latency || entry.historyLatency) && (
@@ -1399,7 +1741,7 @@ export function LogEntryCard({ entry, index, onTimelineClick, onTreeClick, onSes
                     <div className="mt-4">
                       <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">思考过程</p>
                       <pre className="text-[var(--foreground)] font-mono text-xs bg-[var(--card-background)] p-3 rounded-lg overflow-x-auto max-h-40">
-                        {entry.thought}
+                        {decodeBase64(entry.thought)}
                       </pre>
                     </div>
                   )}

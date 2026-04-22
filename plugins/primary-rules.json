@@ -1,0 +1,20 @@
+{
+  "_meta": {
+    "name": "primary",
+    "description": "主规则库 - 从模板复制此文件启用",
+    "version": "1.0",
+    "source": "minimal"
+  },
+  "block": {
+    "rm -rf /": "禁止删除根目录",
+    "rm -rf /*": "禁止删除根目录所有文件",
+    "mkfs": "禁止格式化磁盘",
+    "dd if=/dev/zero": "禁止磁盘清零操作"
+  },
+  "confirm": {},
+  "warn": {
+    "-----BEGIN.*PRIVATE KEY-----": "警告：正在访问私钥",
+    "sk_live_": "警告：正在访问生产环境 Stripe 密钥",
+    "AKIA": "警告：正在访问 AWS 密钥"
+  }
+}
